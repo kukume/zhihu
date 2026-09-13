@@ -1,0 +1,8 @@
+node_modules/
+.wrangler/
+.dev.vars
+cookie.txt
+dist/
+*.log
+.DS_Store
+worker-configuration.d.ts

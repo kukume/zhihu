@@ -1,0 +1,3 @@
+# Copy to .dev.vars and paste a Zhihu Cookie header (one line).
+# ZHIHU_COOKIE=_xsrf=...; z_c0=...; __zse_ck=...
+ZHIHU_COOKIE=

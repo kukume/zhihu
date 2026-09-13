@@ -1,0 +1,269 @@
+import { htmlToMarkdown, htmlToPlain, htmlToSegments } from "./html";
+import { hasLogin, loadCookieHeader, parseCookieHeader, zhihuHeaders } from "./cookies";
+
+export function requireLogin(cookie: string): void {
+  if (!hasLogin(parseCookieHeader(cookie))) {
+    throw new HttpError(401, "Not logged in. PUT /cookies first.");
+  }
+}
+
+export class HttpError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
+type Json = Record<string, unknown>;
+
+async function zhihuGet(url: string, cookie: string): Promise<Response> {
+  return fetch(url, {
+    headers: zhihuHeaders(cookie),
+    redirect: "follow",
+  });
+}
+
+function contentTypeLabel(target: Json): string {
+  const t = String(target.type ?? "");
+  if (t === "answer") {
+    const answerType = String(target.answer_type ?? "");
+    const label = String(((target.label_info as Json) ?? {}).type ?? "");
+    if (answerType === "paid" || label === "paid") return "盐选小说";
+    return "回答";
+  }
+  if (t === "question") return "问题";
+  if (t === "article") return "文章";
+  if (t === "pin") return "想法";
+  if (t === "zvideo") return "视频";
+  return t || "未知";
+}
+
+function stripTags(text: string): string {
+  return htmlToPlain(text);
+}
+
+export async function fetchRecommendations(cookie: string, limit: number) {
+  const all: Json[] = [];
+  let nextUrl =
+    "https://www.zhihu.com/api/v3/feed/topstory/recommend?action=down&ad_interval=-10";
+
+  while (all.length < limit) {
+    const resp = await zhihuGet(nextUrl, cookie);
+    if (resp.status !== 200) {
+      throw new HttpError(resp.status, `推荐接口失败: ${resp.status}`);
+    }
+    const data = (await resp.json()) as Json;
+    const items = (data.data as Json[]) ?? [];
+    for (const item of items) {
+      const t = (item.target as Json) ?? {};
+      const entry: Json = { type: contentTypeLabel(t) };
+      const kind = String(t.type ?? "");
+      if (kind === "answer") {
+        const q = (t.question as Json) ?? {};
+        const author = (t.author as Json) ?? {};
+        entry.id = t.id;
+        entry.question_id = q.id;
+        entry.title = q.title ?? "";
+        entry.author = author.name ?? "匿名";
+        entry.voteup = t.voteup_count ?? 0;
+        entry.comments = t.comment_count ?? 0;
+        entry.excerpt = stripTags(String(t.excerpt ?? ""));
+        entry.url = `https://www.zhihu.com/question/${q.id}/answer/${t.id}`;
+        entry.created_time = t.created_time;
+        entry.updated_time = t.updated_time;
+      } else if (kind === "question") {
+        entry.id = t.id;
+        entry.title = t.title ?? "";
+        entry.answers = t.answer_count ?? 0;
+        entry.followers = t.follower_count ?? 0;
+        entry.url = `https://www.zhihu.com/question/${t.id}`;
+      } else if (kind === "article") {
+        const author = (t.author as Json) ?? {};
+        entry.id = t.id;
+        entry.title = t.title ?? "";
+        entry.author = author.name ?? "匿名";
+        entry.url = t.url ?? `https://zhuanlan.zhihu.com/p/${t.id}`;
+        entry._raw_target = t;
+        entry.created_time = t.created;
+        entry.updated_time = t.updated;
+      } else if (kind === "pin") {
+        const author = (t.author as Json) ?? {};
+        entry.id = t.id;
+        entry.author = author.name ?? "匿名";
+        entry.content = stripTags(String(t.content ?? "")).slice(0, 200);
+      } else {
+        entry.raw_type = t.type ?? "";
+      }
+      all.push(entry);
+    }
+    const paging = (data.paging as Json) ?? {};
+    nextUrl = String(paging.next ?? "");
+    if (!nextUrl || paging.is_end) break;
+  }
+  return all.slice(0, limit);
+}
+
+export async function fetchFullContent(cookie: string, item: Json) {
+  const t = String(item.type ?? "");
+  let html: string | null = null;
+  let title = "";
+  let author = "";
+  let qDetail = "";
+
+  if (t === "回答" || t === "盐选小说") {
+    const resp = await zhihuGet(
+      `https://www.zhihu.com/api/v4/answers/${item.id}?include=content,question.title,question.detail,author.name`,
+      cookie,
+    );
+    if (resp.status !== 200) return null;
+    const data = (await resp.json()) as Json;
+    html = String(data.content ?? "");
+    title = String(((data.question as Json) ?? {}).title ?? "");
+    author = String(((data.author as Json) ?? {}).name ?? "");
+    qDetail = String(((data.question as Json) ?? {}).detail ?? "");
+  } else if (t === "问题") {
+    const resp = await zhihuGet(
+      `https://www.zhihu.com/api/v4/questions/${item.id}?include=title,detail,author.name`,
+      cookie,
+    );
+    if (resp.status !== 200) return null;
+    const data = (await resp.json()) as Json;
+    html = String(data.detail ?? "");
+    title = String(data.title ?? "");
+    author = String(((data.author as Json) ?? {}).name ?? "");
+  } else if (t === "文章") {
+    const raw = ((item._raw_target as Json) ?? {}).content;
+    if (typeof raw === "string" && raw) {
+      html = raw;
+      title = String(item.title ?? "");
+      author = String(item.author ?? "");
+    } else {
+      const resp = await zhihuGet(`https://api.zhihu.com/articles/${item.id}`, cookie);
+      if (resp.status !== 200) return null;
+      const data = (await resp.json()) as Json;
+      html = String(data.content ?? "");
+      title = String(data.title ?? "");
+      author = String(((data.author as Json) ?? {}).name ?? "");
+    }
+  }
+
+  if (html == null) return null;
+  const segments = htmlToSegments(html);
+  const plain = segments.filter((s) => s.type === "text").map((s) => s.content).join("");
+  return {
+    type: t,
+    title,
+    author,
+    question_detail: qDetail,
+    segments,
+    plain_text: plain,
+    html,
+    markdown: htmlToMarkdown(html),
+    content: plain,
+  };
+}
+
+function parseComment(c: Json) {
+  const rawHtml = String(c.content ?? "");
+  let authorObj = (c.author as Json) ?? {};
+  if ("member" in authorObj) authorObj = (authorObj.member as Json) ?? {};
+  let ipLocation = "";
+  for (const tag of (c.comment_tag as Json[]) ?? []) {
+    if (tag.type === "ip_info") ipLocation = String(tag.text ?? "");
+  }
+  const images: string[] = [];
+  for (const m of rawHtml.matchAll(/<a\b[^>]*>/gi)) {
+    if (m[0].includes("comment_img")) {
+      const href = m[0].match(/href="([^"]+)"/);
+      if (href) images.push(href[1]);
+    }
+  }
+  return {
+    id: c.id,
+    author: String(authorObj.name ?? "匿名用户"),
+    content: htmlToPlain(rawHtml),
+    images,
+    like_count: c.vote_count ?? c.like_count ?? 0,
+    url_token: String(authorObj.url_token ?? ""),
+    created_time: c.created_time,
+    dislike_count: c.dislike_count ?? 0,
+    ip_location: ipLocation,
+  };
+}
+
+function parseCommentV5(c: Json) {
+  const cmt = parseComment(c) as Json;
+  cmt.child_comment_count = c.child_comment_count ?? 0;
+  const childList = (c.child_comments as Json[]) ?? [];
+  cmt.child_comments = childList.map(parseCommentV5);
+  cmt.child_next_offset = c.child_comment_next_offset;
+  return cmt;
+}
+
+export async function fetchComments(
+  cookie: string,
+  answerId: string,
+  limit: number,
+  offset: string,
+  orderBy: string,
+) {
+  const url = new URL(`https://www.zhihu.com/api/v4/comment_v5/answers/${answerId}/root_comment`);
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("offset", offset);
+  url.searchParams.set("order_by", orderBy);
+  const resp = await zhihuGet(url.toString(), cookie);
+  if (resp.status !== 200) return { comments: [] as Json[], paging: {} as Json };
+  const data = (await resp.json()) as Json;
+  const paging = (data.paging as Json) ?? {};
+  const nextUrl = String(paging.next ?? "");
+  const nextOffset = nextUrl.match(/offset=([^&]+)/)?.[1] ?? null;
+  const comments = ((data.data as Json[]) ?? [])
+    .filter((c) => String(c.reply_comment_id ?? "0") === "0")
+    .map(parseCommentV5);
+  return {
+    comments,
+    paging: {
+      totals: paging.totals ?? 0,
+      is_end: paging.is_end ?? false,
+      offset,
+      next_offset: nextOffset,
+      has_next: !paging.is_end,
+    },
+  };
+}
+
+export async function fetchChildComments(
+  cookie: string,
+  commentId: string,
+  limit: number,
+  offset: string,
+) {
+  const url = new URL(`https://www.zhihu.com/api/v4/comment_v5/comment/${commentId}/child_comment`);
+  url.searchParams.set("limit", String(limit));
+  url.searchParams.set("offset", offset);
+  url.searchParams.set("order_by", "ts");
+  const resp = await zhihuGet(url.toString(), cookie);
+  if (resp.status !== 200) return { comments: [] as Json[], paging: {} as Json };
+  const data = (await resp.json()) as Json;
+  const paging = (data.paging as Json) ?? {};
+  const nextUrl = String(paging.next ?? "");
+  const nextOffset = nextUrl.match(/offset=([^&]+)/)?.[1] ?? null;
+  return {
+    comments: ((data.data as Json[]) ?? []).map(parseCommentV5),
+    paging: {
+      totals: paging.totals ?? 0,
+      is_end: paging.is_end ?? false,
+      offset,
+      next_offset: nextOffset,
+      has_next: !paging.is_end,
+    },
+  };
+}
+
+export async function getCookieOrThrow(env: Env): Promise<string> {
+  const cookie = await loadCookieHeader(env);
+  requireLogin(cookie);
+  return cookie;
+}
