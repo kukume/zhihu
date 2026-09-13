@@ -115,8 +115,9 @@ export function pickContentFont(fonts: EmbeddedFont[]): { font: EmbeddedFont; ch
       continue;
     }
     const cps = parseCmapCodepoints(bytes);
-    const chars = cps
-      .filter((cp) => cp > 32)
+    const chars = [...cps]
+      .sort((a, b) => a - b)
+      .filter((cp) => cp > 0 && cp !== 0xffff)
       .map((cp) => String.fromCodePoint(cp));
     if (chars.length >= 30 && (!best || chars.length > best.chars.length)) {
       best = { font, chars };

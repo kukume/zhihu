@@ -5,12 +5,15 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "types": "wrangler types",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "decode": "tsx scripts/decode-local.ts"
   },
   "dependencies": {
     "@cloudflare/puppeteer": "^1.0.4"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^1.0.9",
+    "tsx": "^4.23.13",
     "typescript": "^5.9.2",
     "wrangler": "^4.50.0"
   }

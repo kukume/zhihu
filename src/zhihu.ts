@@ -3,7 +3,7 @@ import { hasLogin, loadCookieHeader, parseCookieHeader, zhihuHeaders } from "./c
 
 export function requireLogin(cookie: string): void {
   if (!hasLogin(parseCookieHeader(cookie))) {
-    throw new HttpError(401, "Not logged in. PUT /cookies first.");
+    throw new HttpError(401, "未登录");
   }
 }
 

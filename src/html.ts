@@ -94,18 +94,58 @@ export function extractImgSrc(tag: string): string | null {
   return null;
 }
 
-export function extractArticleText(html: string): string {
-  const blocks = [...html.matchAll(/<div\b([^>]*)>([\s\S]*?)<\/div>/gi)];
-  for (const m of blocks) {
-    const cls = m[1] ?? "";
-    if (
-      (cls.includes("RichText") && cls.includes("richText")) ||
-      cls.includes("RichContent-inner")
-    ) {
-      return htmlToPlain(m[2] ?? "");
-    }
+function sliceBalancedDiv(html: string, start: number): string {
+  const openEnd = html.indexOf(">", start);
+  if (openEnd < 0) return "";
+  let depth = 1;
+  const tagRe = /<\/?div\b[^>]*>/gi;
+  tagRe.lastIndex = openEnd + 1;
+  let tag: RegExpExecArray | null;
+  while ((tag = tagRe.exec(html))) {
+    const token = tag[0];
+    if (/^<\/div/i.test(token)) depth--;
+    else if (!/\/\s*>$/.test(token)) depth++;
+    if (depth === 0) return html.slice(openEnd + 1, tag.index);
   }
-  return htmlToPlain(html);
+  return html.slice(openEnd + 1);
+}
+
+function isArticleClass(attrs: string): boolean {
+  const cls = attrs.match(/class\s*=\s*["']([^"']+)["']/i)?.[1] ?? attrs;
+  return (
+    (cls.includes("RichText") && cls.includes("richText")) ||
+    cls.includes("CopyrightRichText") ||
+    cls.includes("RichContent-inner")
+  );
+}
+
+function extractFromArticleDivs(html: string): string {
+  let best = "";
+  const openRe = /<div\b([^>]*)>/gi;
+  let open: RegExpExecArray | null;
+  while ((open = openRe.exec(html))) {
+    if (!isArticleClass(open[1] ?? "")) continue;
+    const inner = sliceBalancedDiv(html, open.index);
+    const text = htmlToPlain(inner);
+    if (text.length > best.length) best = text;
+  }
+  return best;
+}
+
+export function extractArticleText(html: string): string {
+  let best = extractFromArticleDivs(html);
+  if (best.length > 80) return best;
+
+  const initial = html.match(/id="js-initialData"[^>]*>([\s\S]*?)<\/script>/i);
+  if (initial?.[1]) {
+    const decoded = initial[1]
+      .replace(/\\u003c/gi, "<")
+      .replace(/\\u003e/gi, ">")
+      .replace(/\\"/g, '"');
+    const nested = extractFromArticleDivs(decoded);
+    if (nested.length > best.length) best = nested;
+  }
+  return best;
 }
 
 export function extractTitle(html: string): string {

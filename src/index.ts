@@ -1,6 +1,5 @@
-import { COOKIE_KEY, hasLogin, loadCookieHeader, parseCookieHeader, saveCookieHeader } from "./cookies";
+import { hasLogin, loadCookieHeader, parseCookieHeader } from "./cookies";
 import { decodePaidPage } from "./decode";
-import { browserRefreshCookies } from "./browser";
 import {
   fetchChildComments,
   fetchComments,
@@ -12,7 +11,7 @@ import {
 
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS",
+  "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
@@ -36,41 +35,13 @@ export default {
     const path = url.pathname.replace(/\/+$/, "") || "/";
 
     try {
-      if (path === "/" || path === "/status") {
+      if (path === "/") {
         const cookie = await loadCookieHeader(env);
-        const pairs = parseCookieHeader(cookie);
+        const logged_in = hasLogin(parseCookieHeader(cookie));
         return json({
-          logged_in: hasLogin(pairs),
-          cookies_cached: cookie.length > 20,
-          cookie_names: pairs.map((p) => p.name),
+          logged_in,
+          message: logged_in ? "已登录" : "未登录",
         });
-      }
-
-      if (path === "/cookies" && request.method === "PUT") {
-        const body = (await request.json().catch(() => ({}))) as { cookie?: string };
-        const header = (body.cookie ?? "").trim();
-        if (!header) return json({ error: "Missing cookie" }, 400);
-        await saveCookieHeader(env, header);
-        const pairs = parseCookieHeader(header);
-        return json({ ok: true, logged_in: hasLogin(pairs), count: pairs.length });
-      }
-
-      if (path === "/cookies/refresh" && request.method === "POST") {
-        const cookie = await loadCookieHeader(env);
-        if (!cookie) return json({ error: "No cookies to refresh" }, 400);
-        const next = await browserRefreshCookies(env, cookie);
-        const pairs = parseCookieHeader(next);
-        return json({
-          ok: true,
-          logged_in: hasLogin(pairs),
-          count: pairs.length,
-          cookie_names: pairs.map((p) => p.name),
-        });
-      }
-
-      if (path === "/logout" && request.method === "POST") {
-        await env.ZHIHU_KV.delete(COOKIE_KEY);
-        return json({ message: "Logged out" });
       }
 
       if (path === "/recommend") {

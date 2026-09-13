@@ -1,4 +1,4 @@
-import { browserFetchPaid, browserMapGlyphs } from "./browser";
+import { browserFetchPaid, browserMapGlyphs, type GlyphMapResult } from "./browser";
 import { loadCookieHeader, zhihuHeaders } from "./cookies";
 import {
   applyMapping,
@@ -28,6 +28,24 @@ async function httpFetchHtml(url: string, cookie: string): Promise<{ status: num
   return { status: resp.status, html };
 }
 
+function finishText(raw: string, mapped: GlyphMapResult, warnings: string[]): string {
+  let text = raw;
+  if (mapped.tofu) {
+    warnings.push(mapped.error || "Reference CJK font failed to render; text left undecoded");
+  } else if (Object.keys(mapped.mapping).length) {
+    text = applyMapping(text, mapped.mapping);
+    if (mapped.meanBest > 0 && mapped.meanBest < 0.7) {
+      warnings.push(`Glyph match score ${mapped.meanBest.toFixed(2)} (Python-style mapping still applied)`);
+    }
+  } else {
+    warnings.push("No usable glyph mapping; text is still font-obfuscated");
+  }
+  return text
+    .replace(/备案号:[\s\S]*?(?:禁止转载)?\s*$/u, "")
+    .replace(/©\s*本内容版权为知乎及版权方所有[\s\S]*?侵权必究\s*/u, "")
+    .trim();
+}
+
 async function decodeFromHtml(
   env: Env,
   html: string,
@@ -36,10 +54,10 @@ async function decodeFromHtml(
   const title = extractTitle(html);
   const fonts = extractBase64Fonts(html);
   const picked = pickContentFont(fonts);
-  let mapping: Record<string, string> = {};
+  let mapped: GlyphMapResult = { mapping: {}, meanBest: 0, tofu: false };
   if (picked) {
     try {
-      mapping = await browserMapGlyphs(env, picked.font.base64, picked.chars);
+      mapped = await browserMapGlyphs(env, picked.font.base64, picked.chars);
     } catch (err) {
       warnings.push(`Glyph mapping failed: ${err instanceof Error ? err.message : String(err)}`);
     }
@@ -47,17 +65,14 @@ async function decodeFromHtml(
     warnings.push("No content font found in HTML");
   }
 
-  let text = extractArticleText(html);
-  if (Object.keys(mapping).length) text = applyMapping(text, mapping);
-  text = text
-    .replace(/备案号:[\s\S]*?(?:禁止转载)?\s*$/u, "")
-    .replace(/©\s*本内容版权为知乎及版权方所有[\s\S]*?侵权必究\s*/u, "")
-    .trim();
+  const extracted = extractArticleText(html);
+  if (!extracted) warnings.push("Article body not found in HTML");
+  const text = finishText(extracted, mapped, warnings);
 
   return {
     title,
     font_count: fonts.length,
-    mapping_size: Object.keys(mapping).length,
+    mapping_size: Object.keys(mapped.mapping).length,
     text_length: text.length,
     text,
     warnings,
@@ -67,9 +82,9 @@ async function decodeFromHtml(
 
 export async function decodePaidPage(env: Env, url: string): Promise<DecodeResult> {
   const warnings: string[] = [];
-  let cookie = await loadCookieHeader(env);
+  const cookie = await loadCookieHeader(env);
   if (!cookie) {
-    throw new Error("No cookies. PUT /cookies with a Zhihu Cookie header first.");
+    throw new Error("未登录");
   }
 
   const first = await httpFetchHtml(url, cookie);
@@ -83,23 +98,16 @@ export async function decodePaidPage(env: Env, url: string): Promise<DecodeResul
   const refreshed = await browserFetchPaid(env, url, cookie);
   const title = extractTitle(refreshed.html);
   const fonts = extractBase64Fonts(refreshed.html);
-  let text = extractArticleText(refreshed.html);
-  if (Object.keys(refreshed.mapping).length) {
-    text = applyMapping(text, refreshed.mapping);
-  } else {
-    warnings.push("No content font found in HTML");
-  }
-  text = text
-    .replace(/备案号:[\s\S]*?(?:禁止转载)?\s*$/u, "")
-    .replace(/©\s*本内容版权为知乎及版权方所有[\s\S]*?侵权必究\s*/u, "")
-    .trim();
+  const extracted = extractArticleText(refreshed.html);
+  if (!extracted) warnings.push("Article body not found in HTML");
+  const text = finishText(extracted, refreshed.mapped, warnings);
   if (!looksLikePaidHtml(refreshed.html)) {
     warnings.push("Browser fetch still did not return paid HTML. Cookie may lack 盐选 access or login expired.");
   }
   return {
     title,
     font_count: fonts.length,
-    mapping_size: Object.keys(refreshed.mapping).length,
+    mapping_size: Object.keys(refreshed.mapped.mapping).length,
     text_length: text.length,
     text,
     warnings,
