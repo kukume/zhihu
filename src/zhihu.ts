@@ -118,7 +118,7 @@ function isArticleType(type: string): boolean {
 
 export async function fetchAnswerJson(cookie: string, id: string): Promise<Json | null> {
   const resp = await zhihuGet(
-    `https://www.zhihu.com/api/v4/answers/${id}?include=content,question.title,question.detail,author.name,answer_type,label_info,paid_info,thumbnail_info,attachment,extra`,
+    `https://www.zhihu.com/api/v4/answers/${id}?include=content,question.title,question.detail,author.name,answer_type,label_info,paid_info,paid_info_content,thumbnail_info,attachment,extra`,
     cookie,
   );
   if (resp.status === 401 || resp.status === 403) {
@@ -126,6 +126,46 @@ export async function fetchAnswerJson(cookie: string, id: string): Promise<Json 
   }
   if (resp.status !== 200) return null;
   return (await resp.json()) as Json;
+}
+
+function isCatalogHost(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === "api.zhihu.com" || host === "www.zhihu.com";
+}
+
+export async function fetchPaidColumnCatalog(columnId: string, cookie = ""): Promise<Json | null> {
+  if (!/^\d+$/.test(columnId)) return null;
+  const items: Json[] = [];
+  let extra: Json = {};
+  let nextUrl: string | null = `https://api.zhihu.com/remix/well/${columnId}/catalog?limit=20&offset=0`;
+
+  for (let i = 0; i < 20 && nextUrl; i++) {
+    let parsed: URL;
+    try {
+      parsed = new URL(nextUrl);
+    } catch {
+      return null;
+    }
+    if (parsed.protocol !== "https:" || !isCatalogHost(parsed.hostname)) return null;
+    const resp = await zhihuGet(parsed.toString(), cookie);
+    if (resp.status !== 200) return null;
+    const body = (await resp.json()) as Json;
+    extra = ((body.extra as Json) ?? extra) as Json;
+    const page = (body.data as Json[]) ?? [];
+    items.push(...page);
+    const paging = (body.paging as Json) ?? {};
+    if (paging.is_end === true || paging.has_next === false) break;
+    const next = String(paging.next ?? "");
+    if (next) {
+      nextUrl = next;
+      continue;
+    }
+    if (!page.length) break;
+    nextUrl = `https://api.zhihu.com/remix/well/${columnId}/catalog?limit=20&offset=${items.length}`;
+  }
+
+  if (!items.length) return null;
+  return { data: items, extra };
 }
 
 export async function fetchFullContent(cookie: string, item: Json) {

@@ -3,6 +3,8 @@ import { test } from "node:test";
 import {
   assertSafeZhihuUrl,
   isPaidAnswerPayload,
+  paidColumnRefFromAnswerMeta,
+  paidColumnRefFromString,
   paidColumnUrlFromAnswerMeta,
   parseZhihuUrl,
   targetId,
@@ -89,4 +91,68 @@ test("paid column URL comes from answer metadata, not body HTML", () => {
   );
   assert.equal(isPaidAnswerPayload({ answer_type: "paid" }), true);
   assert.equal(isPaidAnswerPayload({ answer_type: "normal", content: `<a href="${decoy}">x</a>` }), false);
+});
+
+test("parses xen, manuscript, and column-only paid URLs", () => {
+  assert.deepEqual(
+    paidColumnRefFromString("https://www.zhihu.com/xen/market/remix/paid_column/2040529716919198562"),
+    { columnId: "2040529716919198562" },
+  );
+  assert.deepEqual(
+    paidColumnRefFromString(
+      "https://www.zhihu.com/market/manuscript?business_id=2040529716919198562&track_id=2038594889668110014&sku_type=paid_column",
+    ),
+    { columnId: "2040529716919198562", sectionId: "2038594889668110014" },
+  );
+  assert.deepEqual(
+    paidColumnRefFromString("https://www.zhihu.com/market/paid_column/2040529716919198562"),
+    { columnId: "2040529716919198562" },
+  );
+});
+
+test("xen extra.url and sku_id are column refs; body decoys are ignored", () => {
+  const decoy = "https://www.zhihu.com/xen/market/remix/paid_column/1";
+  const xen = "https://www.zhihu.com/xen/market/remix/paid_column/2040529716919198562";
+  assert.equal(
+    paidColumnUrlFromAnswerMeta({
+      id: "2077838700549857848",
+      answer_type: "paid",
+      extra: { url: xen },
+      content: `<p>see <a href="${decoy}">盐选</a></p>`,
+    }),
+    null,
+  );
+  assert.deepEqual(
+    paidColumnRefFromAnswerMeta({
+      id: "2077838700549857848",
+      answer_type: "paid",
+      extra: { url: xen },
+      content: `<p>see <a href="${decoy}">盐选</a></p>`,
+    }),
+    { columnId: "2040529716919198562" },
+  );
+  assert.deepEqual(
+    paidColumnRefFromAnswerMeta({
+      id: "2077838700549857848",
+      answer_type: "paid",
+      paid_info: { sku_id: "2040529716919198562" },
+      content: `<a href="${decoy}">x</a>`,
+    }),
+    { columnId: "2040529716919198562" },
+  );
+  assert.deepEqual(
+    paidColumnRefFromAnswerMeta({
+      id: "2077838700549857848",
+      answer_type: "paid",
+      relationship: { paid_info: { sku_id: "2040529716919198562" } },
+    }),
+    { columnId: "2040529716919198562" },
+  );
+  assert.equal(
+    paidColumnRefFromAnswerMeta({
+      answer_type: "paid",
+      content: `<a href="${decoy}">x</a>`,
+    }),
+    null,
+  );
 });
