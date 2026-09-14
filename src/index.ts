@@ -1,5 +1,5 @@
 import { hasLogin, loadCookieHeader, parseCookieHeader } from "./cookies";
-import { decodePaidPage } from "./decode";
+import { decodeZhihuUrl } from "./decode";
 import {
   fetchChildComments,
   fetchComments,
@@ -114,7 +114,7 @@ export default {
         const target = (body.url ?? "").trim();
         if (!target) return json({ error: "Missing 'url' in JSON body" }, 400);
         if (!target.includes("zhihu.com")) return json({ error: "Not a zhihu.com URL" }, 400);
-        const result = await decodePaidPage(env, target);
+        const result = await decodeZhihuUrl(env, target);
         return json(result);
       }
 

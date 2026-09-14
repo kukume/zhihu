@@ -1,2 +1,4 @@
-# Cookie 不走 HTTP。写入 KV：
+# Cookie 不走 HTTP，也不要发到聊天里。写入 KV：
+# npx wrangler kv key put zhihu_cookie --binding ZHIHU_KV --remote --path cookie.txt
+# 本地模拟：
 # npx wrangler kv key put zhihu_cookie --binding ZHIHU_KV --local --path cookie.txt
