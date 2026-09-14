@@ -121,6 +121,9 @@ export async function fetchAnswerJson(cookie: string, id: string): Promise<Json 
     `https://www.zhihu.com/api/v4/answers/${id}?include=content,question.title,question.detail,author.name,answer_type,label_info,paid_info,thumbnail_info,attachment,extra`,
     cookie,
   );
+  if (resp.status === 401 || resp.status === 403) {
+    throw new HttpError(401, "未登录");
+  }
   if (resp.status !== 200) return null;
   return (await resp.json()) as Json;
 }

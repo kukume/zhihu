@@ -113,7 +113,6 @@ export default {
         const body = (await request.json().catch(() => ({}))) as { url?: string };
         const target = (body.url ?? "").trim();
         if (!target) return json({ error: "Missing 'url' in JSON body" }, 400);
-        if (!target.includes("zhihu.com")) return json({ error: "Not a zhihu.com URL" }, 400);
         const result = await decodeZhihuUrl(env, target);
         return json(result);
       }

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { findPaidColumnUrl, isPaidAnswerPayload, parseZhihuUrl, targetId, targetTypeLabel } from "./urls";
+import {
+  assertSafeZhihuUrl,
+  isPaidAnswerPayload,
+  paidColumnUrlFromAnswerMeta,
+  parseZhihuUrl,
+  targetId,
+  targetTypeLabel,
+} from "./urls";
 
 test("parses question/answer URLs", () => {
   const target = parseZhihuUrl(
@@ -47,27 +54,39 @@ test("parses /answer/:id short links", () => {
   assert.equal(target.questionId, undefined);
 });
 
-test("finds paid_column URLs inside HTML or JSON", () => {
-  const url = findPaidColumnUrl(
-    JSON.stringify({
-      answer_type: "paid",
-      extra: {
-        url: "https://www.zhihu.com/market/paid_column/2040529716919198562/section/2038594889668110014",
-      },
-    }),
-  );
-  assert.equal(
-    url,
-    "https://www.zhihu.com/market/paid_column/2040529716919198562/section/2038594889668110014",
-  );
-  assert.equal(
-    findPaidColumnUrl('<a href="/market/paid_column/1/section/2">盐选</a>'),
-    "https://www.zhihu.com/market/paid_column/1/section/2",
-  );
-  assert.equal(isPaidAnswerPayload({ answer_type: "paid" }), true);
-  assert.equal(isPaidAnswerPayload({ answer_type: "normal" }), false);
+test("rejects http, invalid, and lookalike hosts", () => {
+  assert.throws(() => parseZhihuUrl("not a url"), /Invalid URL/);
+  assert.throws(() => parseZhihuUrl("http://www.zhihu.com/answer/1"), /Only HTTPS URLs are allowed/);
+  assert.throws(() => assertSafeZhihuUrl("https://evilzhihu.com/answer/1"), /Not a zhihu.com URL/);
+  assert.throws(() => assertSafeZhihuUrl("https://zhihu.com.evil.com/answer/1"), /Not a zhihu.com URL/);
+  const unknown = parseZhihuUrl("https://www.zhihu.com/people/foo");
+  assert.equal(unknown.kind, "unknown");
 });
 
-test("rejects invalid URLs", () => {
-  assert.throws(() => parseZhihuUrl("not a url"), /Invalid URL/);
+test("paid column URL comes from answer metadata, not body HTML", () => {
+  const decoy = "https://www.zhihu.com/market/paid_column/1/section/2";
+  const real = "https://www.zhihu.com/market/paid_column/2040529716919198562/section/2038594889668110014";
+  assert.equal(
+    paidColumnUrlFromAnswerMeta({
+      answer_type: "normal",
+      content: `<p>see <a href="${decoy}">盐选</a></p>`,
+    }),
+    null,
+  );
+  assert.equal(
+    paidColumnUrlFromAnswerMeta({
+      answer_type: "paid",
+      paid_info: { column_id: "2040529716919198562", section_id: "2038594889668110014" },
+      content: `<p>see <a href="${decoy}">盐选</a></p>`,
+    }),
+    real,
+  );
+  assert.equal(
+    paidColumnUrlFromAnswerMeta({
+      extra: { url: real },
+    }),
+    real,
+  );
+  assert.equal(isPaidAnswerPayload({ answer_type: "paid" }), true);
+  assert.equal(isPaidAnswerPayload({ answer_type: "normal", content: `<a href="${decoy}">x</a>` }), false);
 });

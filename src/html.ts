@@ -171,6 +171,28 @@ function readInitialData(html: string): unknown | null {
   }
 }
 
+export function extractAnswerEntity(html: string, answerId: string): Record<string, unknown> | null {
+  const data = readInitialData(html);
+  if (!data || typeof data !== "object") return null;
+  const root = data as Record<string, unknown>;
+  const state = (root.initialState as Record<string, unknown> | undefined) ?? root;
+  const entities = state.entities as Record<string, unknown> | undefined;
+  const answers = entities?.answers as Record<string, unknown> | undefined;
+  if (!answers || typeof answers !== "object") return null;
+  const direct = answers[answerId];
+  if (direct && typeof direct === "object") return direct as Record<string, unknown>;
+  for (const [key, value] of Object.entries(answers)) {
+    if (key === answerId && value && typeof value === "object") return value as Record<string, unknown>;
+    if (value && typeof value === "object") {
+      const id = (value as Record<string, unknown>).id;
+      if (id === answerId || id === Number(answerId) || String(id) === answerId) {
+        return value as Record<string, unknown>;
+      }
+    }
+  }
+  return null;
+}
+
 export function extractHtmlFromInitialData(html: string, hintId?: string): string {
   const data = readInitialData(html);
   if (!data) return "";

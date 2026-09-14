@@ -6,21 +6,56 @@ export type ZhihuTarget =
   | { kind: "unknown"; url: string };
 
 const ID = "([0-9]+)";
+const PAGE_HOSTS = new Set(["www.zhihu.com", "zhihu.com", "zhuanlan.zhihu.com"]);
+const URL_META_KEYS = new Set([
+  "url",
+  "share_url",
+  "section_url",
+  "column_url",
+  "paid_url",
+  "target_url",
+  "href",
+  "link",
+  "canonical_url",
+]);
+const META_BAG_KEYS = [
+  "paid_info",
+  "extra",
+  "thumbnail_info",
+  "attachment",
+  "label_info",
+  "paid_column",
+  "section",
+  "column",
+  "sku",
+  "commercial_info",
+];
 
-export function parseZhihuUrl(raw: string): ZhihuTarget {
+export function isZhihuPageHost(hostname: string): boolean {
+  return PAGE_HOSTS.has(hostname.toLowerCase());
+}
+
+export function assertSafeZhihuUrl(raw: string): string {
   let parsed: URL;
   try {
     parsed = new URL(raw.trim());
   } catch {
     throw new Error("Invalid URL");
   }
-  const host = parsed.hostname.replace(/^www\./, "").toLowerCase();
-  const path = parsed.pathname.replace(/\/+$/, "") || "/";
-  const url = parsed.toString();
-
-  if (host !== "zhihu.com" && host !== "zhuanlan.zhihu.com") {
-    return { kind: "unknown", url };
+  if (parsed.protocol !== "https:") {
+    throw new Error("Only HTTPS URLs are allowed");
   }
+  if (!isZhihuPageHost(parsed.hostname)) {
+    throw new Error("Not a zhihu.com URL");
+  }
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+export function parseZhihuUrl(raw: string): ZhihuTarget {
+  const url = assertSafeZhihuUrl(raw);
+  const parsed = new URL(url);
+  const path = parsed.pathname.replace(/\/+$/, "") || "/";
 
   const paid = path.match(new RegExp(`^/market/paid_column/${ID}/section/${ID}$`));
   if (paid) {
@@ -78,12 +113,67 @@ export function targetId(target: ZhihuTarget): string {
   }
 }
 
-const PAID_COLUMN_RE = /(?:https?:\/\/(?:www\.)?zhihu\.com)?\/market\/paid_column\/(\d+)\/section\/(\d+)/;
+export function paidColumnUrlFromIds(columnId: string, sectionId: string): string {
+  return `https://www.zhihu.com/market/paid_column/${columnId}/section/${sectionId}`;
+}
 
-export function findPaidColumnUrl(text: string): string | null {
-  const match = text.match(PAID_COLUMN_RE);
+function paidColumnUrlFromString(value: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(value.trim(), "https://www.zhihu.com");
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:") return null;
+  if (!isZhihuPageHost(parsed.hostname)) return null;
+  const path = parsed.pathname.replace(/\/+$/, "") || "/";
+  const match = path.match(/^\/market\/paid_column\/(\d+)\/section\/(\d+)$/);
   if (!match) return null;
-  return `https://www.zhihu.com/market/paid_column/${match[1]}/section/${match[2]}`;
+  return paidColumnUrlFromIds(match[1], match[2]);
+}
+
+function pickId(obj: Record<string, unknown>, keys: string[]): string | null {
+  for (const key of keys) {
+    const value = obj[key];
+    if (typeof value === "number" && Number.isFinite(value)) return String(value);
+    if (typeof value === "string" && /^\d+$/.test(value)) return value;
+  }
+  return null;
+}
+
+function urlFromMetaObject(obj: Record<string, unknown>): string | null {
+  for (const key of URL_META_KEYS) {
+    const value = obj[key];
+    if (typeof value === "string") {
+      const found = paidColumnUrlFromString(value);
+      if (found) return found;
+    }
+  }
+  const columnId = pickId(obj, ["column_id", "paid_column_id", "columnId"]);
+  const sectionId = pickId(obj, ["section_id", "paid_section_id", "sectionId"]);
+  if (columnId && sectionId) return paidColumnUrlFromIds(columnId, sectionId);
+  return null;
+}
+
+export function paidColumnUrlFromAnswerMeta(data: Record<string, unknown> | null | undefined): string | null {
+  if (!data) return null;
+  const direct = urlFromMetaObject(data);
+  if (direct) return direct;
+  for (const key of META_BAG_KEYS) {
+    const child = data[key];
+    if (!child || typeof child !== "object" || Array.isArray(child)) continue;
+    const found = urlFromMetaObject(child as Record<string, unknown>);
+    if (found) return found;
+    const nested = child as Record<string, unknown>;
+    const column = nested.column;
+    const section = nested.section;
+    if (column && typeof column === "object" && section && typeof section === "object") {
+      const columnId = pickId(column as Record<string, unknown>, ["id", "column_id"]);
+      const sectionId = pickId(section as Record<string, unknown>, ["id", "section_id"]);
+      if (columnId && sectionId) return paidColumnUrlFromIds(columnId, sectionId);
+    }
+  }
+  return null;
 }
 
 export function isPaidAnswerPayload(data: Record<string, unknown> | null | undefined): boolean {
@@ -93,5 +183,5 @@ export function isPaidAnswerPayload(data: Record<string, unknown> | null | undef
   if (label && typeof label === "object" && String((label as { type?: unknown }).type ?? "") === "paid") {
     return true;
   }
-  return Boolean(findPaidColumnUrl(JSON.stringify(data)));
+  return false;
 }

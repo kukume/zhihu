@@ -78,19 +78,15 @@ GET /child_comments/456?limit=20
 
 `Content-Type: application/json`
 
-盐选专栏页走页面 + 字体解码（这条链路保持原样）。问答 / 文章 URL 如果能解析到对应的 `paid_column/.../section/...`，会转到同一套专栏解码，避免把问答页里的 CSS 抽进正文，也避免内容 API 只返回节选。
-
-普通回答 / 问题 / 文章没有专栏链接时，走内容 API，返回 `html`（仅 RichText）以及 `text` / `markdown` / `segments`。
+只解盐选。专栏页走页面 + 字体解码。盐选回答 URL 只从该回答自己的元数据里取对应专栏，再走同一套解码。不是盐选则返回 400。
 
 ```json
 {
-  "url": "https://www.zhihu.com/question/459329916/answer/2077838700549857848"
+  "url": "https://www.zhihu.com/market/paid_column/<id>/section/<id>"
 }
 ```
 
-也支持：
+也支持盐选回答：
 
-- `https://www.zhihu.com/question/<id>`
+- `https://www.zhihu.com/question/<id>/answer/<id>`
 - `https://www.zhihu.com/answer/<id>`
-- `https://zhuanlan.zhihu.com/p/<id>`
-- `https://www.zhihu.com/market/paid_column/<id>/section/<id>`

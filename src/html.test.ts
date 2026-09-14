@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  extractAnswerEntity,
   extractArticleHtml,
   extractArticleText,
   htmlToPlain,
   looksLikeCssDump,
   stripDocumentNoise,
 } from "./html";
+import { paidColumnUrlFromAnswerMeta } from "./urls";
 
 const answerPage = `<!doctype html>
 <html>
@@ -85,4 +87,30 @@ test("paid-like RichText wins over JSON when it is long and not CSS", () => {
   const text = extractArticleText(html, "1");
   assert.match(text, /盐选正文/);
   assert.doesNotMatch(text, /节选/);
+});
+
+test("extractAnswerEntity only returns the requested answer metadata", () => {
+  const html = `<script id="js-initialData" type="text/json">${JSON.stringify({
+    initialState: {
+      entities: {
+        answers: {
+          "1": {
+            id: "1",
+            paid_info: { column_id: "10", section_id: "11" },
+          },
+          "2": {
+            id: "2",
+            paid_info: { column_id: "20", section_id: "21" },
+            content: '<a href="/market/paid_column/99/section/99">x</a>',
+          },
+        },
+      },
+    },
+  })}</script>`;
+  const entity = extractAnswerEntity(html, "2");
+  assert.equal(
+    paidColumnUrlFromAnswerMeta(entity),
+    "https://www.zhihu.com/market/paid_column/20/section/21",
+  );
+  assert.equal(paidColumnUrlFromAnswerMeta({ content: entity?.content }), null);
 });
