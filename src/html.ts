@@ -1,5 +1,17 @@
+export type Segment = { type: "text"; content: string } | { type: "image"; src: string };
+
+export function stripDocumentNoise(html: string): string {
+  return html
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<noscript\b[^>]*>[\s\S]*?<\/noscript>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<link\b[^>]*>/gi, "");
+}
+
 export function htmlToPlain(html: string): string {
-  let text = html.replace(/<br\s*\/?>/gi, "\n");
+  let text = stripDocumentNoise(html);
+  text = text.replace(/<br\s*\/?>/gi, "\n");
   text = text.replace(/<\/(?:p|div|h\d|li|blockquote|figcaption)\s*>/gi, "\n\n");
   text = text.replace(/<(?:p|div|h\d|li|blockquote)\b[^>]*>/gi, "\n");
   text = text.replace(/<hr\b[^>]*\/?>/gi, "\n---\n");
@@ -14,7 +26,7 @@ export function htmlToPlain(html: string): string {
 }
 
 export function htmlToMarkdown(html: string): string {
-  let text = html.replace(/<noscript>[\s\S]*?<\/noscript>/gi, "");
+  let text = stripDocumentNoise(html);
   for (let i = 6; i >= 1; i--) {
     const re = new RegExp(`<h${i}\\b[^>]*>([\\s\\S]*?)</h${i}>`, "gi");
     text = text.replace(re, `${"#".repeat(i)} $1\n`);
@@ -67,10 +79,8 @@ export function htmlToMarkdown(html: string): string {
   return text.replace(/^\n+|\n+$/g, "");
 }
 
-export type Segment = { type: "text"; content: string } | { type: "image"; src: string };
-
 export function htmlToSegments(html: string): Segment[] {
-  const parts = html.split(/(<img\b[^>]*\/?>|<figure\b[^>]*>[\s\S]*?<\/figure>)/gi);
+  const parts = stripDocumentNoise(html).split(/(<img\b[^>]*\/?>|<figure\b[^>]*>[\s\S]*?<\/figure>)/gi);
   const segments: Segment[] = [];
   for (const part of parts) {
     if (!part.trim()) continue;
@@ -94,58 +104,147 @@ export function extractImgSrc(tag: string): string | null {
   return null;
 }
 
-function sliceBalancedDiv(html: string, start: number): string {
+function sliceBalancedTag(html: string, start: number, tagName: string): string {
   const openEnd = html.indexOf(">", start);
   if (openEnd < 0) return "";
-  let depth = 1;
-  const tagRe = /<\/?div\b[^>]*>/gi;
+  const tagRe = new RegExp(`</?${tagName}\\b[^>]*>`, "gi");
   tagRe.lastIndex = openEnd + 1;
+  let depth = 1;
   let tag: RegExpExecArray | null;
   while ((tag = tagRe.exec(html))) {
     const token = tag[0];
-    if (/^<\/div/i.test(token)) depth--;
+    if (new RegExp(`^</${tagName}`, "i").test(token)) depth--;
     else if (!/\/\s*>$/.test(token)) depth++;
     if (depth === 0) return html.slice(openEnd + 1, tag.index);
   }
   return html.slice(openEnd + 1);
 }
 
-function isArticleClass(attrs: string): boolean {
-  const cls = attrs.match(/class\s*=\s*["']([^"']+)["']/i)?.[1] ?? attrs;
+function classAttr(attrs: string): string {
+  return attrs.match(/class\s*=\s*["']([^"']+)["']/i)?.[1] ?? attrs;
+}
+
+function isArticleClass(cls: string): boolean {
   return (
     (cls.includes("RichText") && cls.includes("richText")) ||
     cls.includes("CopyrightRichText") ||
-    cls.includes("RichContent-inner")
+    cls.includes("RichContent-inner") ||
+    cls.includes("Post-RichText")
   );
 }
 
-function extractFromArticleDivs(html: string): string {
+function extractHtmlFromArticleTags(html: string): string {
   let best = "";
-  const openRe = /<div\b([^>]*)>/gi;
+  let bestLen = 0;
+  const openRe = /<(div|span)\b([^>]*)>/gi;
   let open: RegExpExecArray | null;
   while ((open = openRe.exec(html))) {
-    if (!isArticleClass(open[1] ?? "")) continue;
-    const inner = sliceBalancedDiv(html, open.index);
+    const tagName = open[1] ?? "div";
+    if (!isArticleClass(classAttr(open[2] ?? ""))) continue;
+    const inner = sliceBalancedTag(html, open.index, tagName);
     const text = htmlToPlain(inner);
-    if (text.length > best.length) best = text;
+    if (text.length > bestLen) {
+      best = inner;
+      bestLen = text.length;
+    }
   }
   return best;
 }
 
-export function extractArticleText(html: string): string {
-  let best = extractFromArticleDivs(html);
-  if (best.length > 80) return best;
+function isContentHtml(value: string): boolean {
+  if ((value.match(/\.css-[A-Za-z0-9_-]+\s*\{/g)?.length ?? 0) >= 3) return false;
+  return /<(?:p|figure|img|h[1-6]|blockquote|ul|ol|pre|code|b|strong|em|br)\b/i.test(value);
+}
 
-  const initial = html.match(/id="js-initialData"[^>]*>([\s\S]*?)<\/script>/i);
-  if (initial?.[1]) {
-    const decoded = initial[1]
-      .replace(/\\u003c/gi, "<")
-      .replace(/\\u003e/gi, ">")
-      .replace(/\\"/g, '"');
-    const nested = extractFromArticleDivs(decoded);
-    if (nested.length > best.length) best = nested;
+function readInitialData(html: string): unknown | null {
+  const m = html.match(/id="js-initialData"[^>]*>([\s\S]*?)<\/script>/i);
+  if (!m?.[1]) return null;
+  const raw = m[1].trim();
+  try {
+    return JSON.parse(raw);
+  } catch {
+    try {
+      return JSON.parse(decodeEntities(raw));
+    } catch {
+      return null;
+    }
   }
-  return best;
+}
+
+export function extractAnswerEntity(html: string, answerId: string): Record<string, unknown> | null {
+  const data = readInitialData(html);
+  if (!data || typeof data !== "object") return null;
+  const root = data as Record<string, unknown>;
+  const state = (root.initialState as Record<string, unknown> | undefined) ?? root;
+  const entities = state.entities as Record<string, unknown> | undefined;
+  const answers = entities?.answers as Record<string, unknown> | undefined;
+  if (!answers || typeof answers !== "object") return null;
+  const direct = answers[answerId];
+  if (direct && typeof direct === "object") return direct as Record<string, unknown>;
+  for (const [key, value] of Object.entries(answers)) {
+    if (key === answerId && value && typeof value === "object") return value as Record<string, unknown>;
+    if (value && typeof value === "object") {
+      const id = (value as Record<string, unknown>).id;
+      if (id === answerId || id === Number(answerId) || String(id) === answerId) {
+        return value as Record<string, unknown>;
+      }
+    }
+  }
+  return null;
+}
+
+export function extractHtmlFromInitialData(html: string, hintId?: string): string {
+  const data = readInitialData(html);
+  if (!data) return "";
+
+  let hinted = "";
+  let best = "";
+  const seen = new Set<unknown>();
+
+  const consider = (value: unknown, obj: Record<string, unknown>) => {
+    if (typeof value !== "string" || !isContentHtml(value)) return;
+    if (value.length > best.length) best = value;
+    if (!hintId) return;
+    const id = obj.id;
+    if (id === hintId || id === Number(hintId) || String(id) === hintId) {
+      if (value.length > hinted.length) hinted = value;
+    }
+  };
+
+  const walk = (node: unknown) => {
+    if (!node || typeof node !== "object" || seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    const obj = node as Record<string, unknown>;
+    consider(obj.content, obj);
+    consider(obj.detail, obj);
+    for (const value of Object.values(obj)) walk(value);
+  };
+
+  walk(data);
+  return hinted || best;
+}
+
+export function extractArticleHtml(html: string, hintId?: string): string {
+  const fromTags = extractHtmlFromArticleTags(html);
+  const tagText = htmlToPlain(fromTags);
+  if (tagText.length > 80 && !looksLikeCssDump(tagText)) return fromTags;
+
+  const fromJson = extractHtmlFromInitialData(html, hintId);
+  const jsonText = htmlToPlain(fromJson);
+  if (jsonText.length > 0 && !looksLikeCssDump(jsonText)) {
+    if (jsonText.length >= tagText.length || looksLikeCssDump(tagText) || tagText.length <= 80) {
+      return fromJson;
+    }
+  }
+  return fromTags || fromJson;
+}
+
+export function extractArticleText(html: string, hintId?: string): string {
+  return htmlToPlain(extractArticleHtml(html, hintId));
 }
 
 export function extractTitle(html: string): string {
@@ -155,6 +254,13 @@ export function extractTitle(html: string): string {
     .trim()
     .replace(/\s*[-–—|]\s*知乎.*$/u, "")
     .replace(/\s*[-–—|]\s*Zhihu.*$/i, "");
+}
+
+export function looksLikeCssDump(text: string): boolean {
+  const emotion = text.match(/\.css-[A-Za-z0-9_-]+\s*\{/g);
+  if ((emotion?.length ?? 0) >= 3) return true;
+  const rules = text.match(/[.#][A-Za-z][\w-]*\s*\{/g);
+  return (rules?.length ?? 0) >= 8;
 }
 
 function decodeEntities(text: string): string {

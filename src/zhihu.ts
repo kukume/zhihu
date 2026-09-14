@@ -116,6 +116,18 @@ function isArticleType(type: string): boolean {
   return type === "文章" || type === "article";
 }
 
+export async function fetchAnswerJson(cookie: string, id: string): Promise<Json | null> {
+  const resp = await zhihuGet(
+    `https://www.zhihu.com/api/v4/answers/${id}?include=content,question.title,question.detail,author.name,answer_type,label_info,paid_info,thumbnail_info,attachment,extra`,
+    cookie,
+  );
+  if (resp.status === 401 || resp.status === 403) {
+    throw new HttpError(401, "未登录");
+  }
+  if (resp.status !== 200) return null;
+  return (await resp.json()) as Json;
+}
+
 export async function fetchFullContent(cookie: string, item: Json) {
   const t = String(item.type ?? "");
   let html: string | null = null;
@@ -124,12 +136,8 @@ export async function fetchFullContent(cookie: string, item: Json) {
   let qDetail = "";
 
   if (isAnswerType(t)) {
-    const resp = await zhihuGet(
-      `https://www.zhihu.com/api/v4/answers/${item.id}?include=content,question.title,question.detail,author.name`,
-      cookie,
-    );
-    if (resp.status !== 200) return null;
-    const data = (await resp.json()) as Json;
+    const data = await fetchAnswerJson(cookie, String(item.id));
+    if (!data) return null;
     html = String(data.content ?? "");
     title = String(((data.question as Json) ?? {}).title ?? "");
     author = String(((data.author as Json) ?? {}).name ?? "");

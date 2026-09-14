@@ -114,7 +114,11 @@ export function pickContentFont(fonts: EmbeddedFont[]): { font: EmbeddedFont; ch
     } catch {
       continue;
     }
+    const family = font.family.toLowerCase();
+    if (/(icon|awesome|number)/i.test(family)) continue;
     const cps = parseCmapCodepoints(bytes);
+    const cjk = cps.filter((cp) => cp >= 0x4e00 && cp <= 0x9fff);
+    if (cjk.length < 20) continue;
     const chars = [...cps]
       .sort((a, b) => a - b)
       .filter((cp) => cp > 0 && cp !== 0xffff)

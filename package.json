@@ -6,6 +6,7 @@
     "deploy": "wrangler deploy",
     "types": "wrangler types",
     "check": "tsc --noEmit",
+    "test": "tsx --test src/*.test.ts",
     "decode": "tsx scripts/decode-local.ts"
   },
   "dependencies": {
