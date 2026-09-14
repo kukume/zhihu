@@ -20,7 +20,9 @@ function json(data: unknown, status = 200): Response {
 }
 
 function errorResponse(err: unknown): Response {
-  if (err instanceof HttpError) return json({ error: err.message }, err.status);
+  if (err instanceof HttpError) {
+    return json({ error: err.message, ...(err.details ? { debug: err.details } : {}) }, err.status);
+  }
   const message = err instanceof Error ? err.message : String(err);
   return json({ error: message }, 500);
 }

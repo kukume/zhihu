@@ -1,5 +1,5 @@
 import { htmlToMarkdown, htmlToPlain, htmlToSegments } from "./html";
-import { parseZhihuJson } from "./json";
+import { parseZhihuJson, snowflakeIdsFromNamedBags } from "./json";
 import { hasLogin, loadCookieHeader, parseCookieHeader, zhihuHeaders } from "./cookies";
 
 export function requireLogin(cookie: string): void {
@@ -12,6 +12,7 @@ export class HttpError extends Error {
   constructor(
     public status: number,
     message: string,
+    public details?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -131,16 +132,128 @@ function isArticleType(type: string): boolean {
   return type === "文章" || type === "article";
 }
 
-export async function fetchAnswerJson(cookie: string, id: string): Promise<Json | null> {
-  const resp = await zhihuGet(
-    `https://www.zhihu.com/api/v4/answers/${id}?include=content,question.title,question.detail,author.name,answer_type,label_info,paid_info,paid_info_content,thumbnail_info,attachment,extra,relationship,commercial_info`,
-    cookie,
-  );
+const ANSWER_INCLUDE =
+  "content,question,question.title,question.detail,author.name,answer_type,label_info,paid_info,paid_info_content,thumbnail_info,attachment,extra,extras,biz_ext,relationship,commercial_info";
+const QUESTION_ANSWER_INCLUDE =
+  "data[*].is_normal,answer_type,label_info,paid_info,paid_info_content,extra,extras,biz_ext,thumbnail_info,attachment,content,excerpt,question";
+const PAID_BAG_KEYS = [
+  "paid_info",
+  "paid_info_content",
+  "extra",
+  "extras",
+  "biz_ext",
+  "thumbnail_info",
+  "attachment",
+  "commercial_info",
+  "label_info",
+  "relationship",
+];
+
+export type AnswerPayload = {
+  data: Json;
+  raw: string;
+};
+
+function asJson(value: unknown): Json | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Json;
+}
+
+function mergePaidFields(base: Json, extra: Json): Json {
+  const out: Json = { ...base };
+  for (const key of PAID_BAG_KEYS) {
+    if (out[key] == null && extra[key] != null) out[key] = extra[key];
+  }
+  if (out.answer_type == null && extra.answer_type != null) out.answer_type = extra.answer_type;
+  if (out.label_info == null && extra.label_info != null) out.label_info = extra.label_info;
+  return out;
+}
+
+async function readAnswerResponse(resp: Response): Promise<AnswerPayload | null> {
   if (resp.status === 401 || resp.status === 403) {
     throw new HttpError(401, "未登录");
   }
   if (resp.status !== 200) return null;
-  return zhihuJson(resp);
+  const raw = await resp.text();
+  try {
+    const data = asJson(parseZhihuJson(raw));
+    if (!data) return null;
+    return { data, raw };
+  } catch {
+    return null;
+  }
+}
+
+export async function fetchAnswerPayload(cookie: string, id: string, questionId?: string): Promise<AnswerPayload | null> {
+  const urls = [
+    `https://www.zhihu.com/api/v4/answers/${id}?include=${ANSWER_INCLUDE}`,
+    `https://api.zhihu.com/answers/${id}?include=${ANSWER_INCLUDE}`,
+  ];
+  let first: AnswerPayload | null = null;
+  for (const url of urls) {
+    const resp = await zhihuGet(url, cookie);
+    const payload = await readAnswerResponse(resp);
+    if (!payload) continue;
+    if (!first) first = payload;
+    if (payload.data.paid_info != null || payload.data.paid_info_content != null) return payload;
+  }
+
+  const qid =
+    questionId ||
+    (first ? String(((first.data.question as Json) ?? {}).id ?? "") : "");
+  if (qid && /^\d+$/.test(qid)) {
+    const listed = await fetchAnswerInQuestion(cookie, qid, id);
+    if (listed) {
+      if (!first) return listed;
+      return {
+        data: mergePaidFields(first.data, listed.data),
+        raw: `${first.raw}\n${listed.raw}`,
+      };
+    }
+  }
+  return first;
+}
+
+async function fetchAnswerInQuestion(cookie: string, questionId: string, answerId: string): Promise<AnswerPayload | null> {
+  let nextUrl: string | null =
+    `https://www.zhihu.com/api/v4/questions/${questionId}/answers?include=${encodeURIComponent(QUESTION_ANSWER_INCLUDE)}&limit=20&offset=0&platform=desktop&sort_by=default`;
+  for (let page = 0; page < 8 && nextUrl; page++) {
+    const resp = await zhihuGet(nextUrl, cookie);
+    if (resp.status === 401 || resp.status === 403) throw new HttpError(401, "未登录");
+    if (resp.status !== 200) return null;
+    const raw = await resp.text();
+    const body = asJson(parseZhihuJson(raw));
+    if (!body) return null;
+    for (const item of (body.data as Json[]) ?? []) {
+      if (!item || typeof item !== "object") continue;
+      const rec = item as Json;
+      if (String(rec.id ?? "") === answerId) return { data: rec, raw };
+    }
+    const paging = (body.paging as Json) ?? {};
+    if (paging.is_end === true) break;
+    nextUrl = String(paging.next ?? "") || null;
+  }
+  return null;
+}
+
+export function candidateColumnIdsFromAnswer(raw: string, data: Json, exclude: string[]): string[] {
+  const skip = new Set(exclude.filter(Boolean));
+  const fromBags = snowflakeIdsFromNamedBags(raw, PAID_BAG_KEYS).filter((id) => !skip.has(id));
+  if (fromBags.length) return fromBags;
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const match of raw.matchAll(/\d{16,}/g)) {
+    const id = match[0];
+    if (skip.has(id) || seen.has(id)) continue;
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
+}
+
+export async function fetchAnswerJson(cookie: string, id: string): Promise<Json | null> {
+  const payload = await fetchAnswerPayload(cookie, id);
+  return payload?.data ?? null;
 }
 
 function isCatalogHost(hostname: string): boolean {
