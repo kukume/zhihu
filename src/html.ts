@@ -1,3 +1,5 @@
+import { parseZhihuJson } from "./json";
+
 export type Segment = { type: "text"; content: string } | { type: "image"; src: string };
 
 export function stripDocumentNoise(html: string): string {
@@ -161,10 +163,10 @@ function readInitialData(html: string): unknown | null {
   if (!m?.[1]) return null;
   const raw = m[1].trim();
   try {
-    return JSON.parse(raw);
+    return parseZhihuJson(raw);
   } catch {
     try {
-      return JSON.parse(decodeEntities(raw));
+      return parseZhihuJson(decodeEntities(raw));
     } catch {
       return null;
     }

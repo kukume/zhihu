@@ -21,6 +21,7 @@ import { resolvePaidColumnUrlFromMeta } from "./catalog";
 import {
   assertSafeZhihuUrl,
   isPaidAnswerPayload,
+  paidColumnRefFromAnswerMeta,
   parseZhihuUrl,
   targetId,
   targetTypeLabel,
@@ -214,6 +215,14 @@ async function resolvePaidColumnUrl(cookie: string, target: Extract<ZhihuTarget,
   if (!payload || !isPaidAnswerPayload(payload)) {
     throw new HttpError(400, "不是盐选内容");
   }
+  const ref = paidColumnRefFromAnswerMeta(payload);
+  const paidInfo =
+    payload.paid_info && typeof payload.paid_info === "object" && !Array.isArray(payload.paid_info)
+      ? Object.keys(payload.paid_info as Record<string, unknown>)
+      : [];
+  console.log(
+    `paid-column answer=${target.id} keys=${Object.keys(payload).join(",")} paid_info=${paidInfo.join(",")} ref=${JSON.stringify(ref)}`,
+  );
   const fetchCatalog = (columnId: string) => fetchPaidColumnCatalog(columnId, cookie);
   const fromApi = await resolvePaidColumnUrlFromMeta(payload, {
     answerId: target.id,

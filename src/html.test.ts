@@ -8,7 +8,8 @@ import {
   looksLikeCssDump,
   stripDocumentNoise,
 } from "./html";
-import { paidColumnUrlFromAnswerMeta } from "./urls";
+import { parseZhihuJson } from "./json";
+import { paidColumnRefFromAnswerMeta, paidColumnUrlFromAnswerMeta } from "./urls";
 
 const answerPage = `<!doctype html>
 <html>
@@ -113,4 +114,27 @@ test("extractAnswerEntity only returns the requested answer metadata", () => {
     "https://www.zhihu.com/market/paid_column/20/section/21",
   );
   assert.equal(paidColumnUrlFromAnswerMeta({ content: entity?.content }), null);
+});
+
+test("snowflake sku_id in raw JSON is kept as a decimal string", () => {
+  const raw = '{"answer_type":"paid","paid_info":{"sku_id":2040529716919198562}}';
+  assert.notEqual(JSON.parse(raw).paid_info.sku_id, "2040529716919198562");
+  const parsed = parseZhihuJson(raw) as {
+    paid_info: { sku_id: string };
+    answer_type: string;
+  };
+  assert.equal(parsed.paid_info.sku_id, "2040529716919198562");
+  assert.deepEqual(paidColumnRefFromAnswerMeta(parsed), { columnId: "2040529716919198562" });
+});
+
+test("paid_info_content HTML can carry the xen column link", () => {
+  const ref = paidColumnRefFromAnswerMeta({
+    id: "2077838700549857848",
+    answer_type: "paid",
+    paid_info_content: {
+      content:
+        '<p><a href="https://www.zhihu.com/xen/market/remix/paid_column/2040529716919198562">盐选</a></p>',
+    },
+  });
+  assert.deepEqual(ref, { columnId: "2040529716919198562" });
 });
