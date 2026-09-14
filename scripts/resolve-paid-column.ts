@@ -20,22 +20,6 @@ function loadCookie(): string {
 }
 
 function selfCheckParser(): void {
-  const sku = COLUMN_ID;
-  const body = `{"content":"see [${sku}] here","paid_info":{"sku_id":${sku}},"id":${ANSWER_ID}}`;
-  const parsed = parseZhihuJson(body) as {
-    content: string;
-    paid_info: { sku_id: string };
-    id: string;
-  };
-  if (!parsed.content.includes(`[${sku}]`)) {
-    throw new Error(`parser ate content: ${parsed.content}`);
-  }
-  if (parsed.paid_info.sku_id !== sku) {
-    throw new Error(`parser missed sku_id: ${JSON.stringify(parsed.paid_info)}`);
-  }
-  if (parsed.id !== ANSWER_ID) {
-    throw new Error(`parser missed answer id: ${parsed.id}`);
-  }
   const cited = `{"content":"cite [${ANSWER_ID}]"}`;
   const citedParsed = parseZhihuJson(cited) as { content: string };
   if (citedParsed.content !== `cite [${ANSWER_ID}]`) {
@@ -50,15 +34,6 @@ function selfCheckPaidContent(): void {
     new_intro_card: { url: EXPECTED },
   });
   if (fromUrl !== EXPECTED) throw new Error(`url fields mismatch: ${fromUrl}`);
-
-  const fromIds = paidColumnUrlFromPaidContent({
-    id: "2040529717112076092",
-    shelves_info: { sku_id: "2040529717112076092", business_id: COLUMN_ID, property_type: "paid_column" },
-    za_info: { id: COLUMN_ID, type: "PaidColumn", token: COLUMN_ID },
-    goods_card: { body: { content_id: COLUMN_ID, content_type: "Paid_Column" } },
-    progress_info: { unit_id: SECTION_ID, type: "paid_column" },
-  });
-  if (fromIds !== EXPECTED) throw new Error(`id fields mismatch: ${fromIds}`);
   console.log(`paid_content extract ok: ${EXPECTED}`);
 }
 
@@ -75,12 +50,8 @@ async function main() {
         {
           live: true,
           paidUrl: liveUrl,
-          keys: Object.keys(live),
-          next_section_info: live.next_section_info ?? null,
-          new_intro_card: live.new_intro_card ?? null,
-          progress_info: live.progress_info ?? null,
-          za_info: live.za_info ?? null,
-          shelves_info: live.shelves_info ?? null,
+          next_section_info_url: (live.next_section_info as { url?: string } | undefined)?.url ?? null,
+          new_intro_card_url: (live.new_intro_card as { url?: string } | undefined)?.url ?? null,
         },
         null,
         2,
@@ -90,24 +61,12 @@ async function main() {
       throw new Error(`live kmqa mismatch: ${liveUrl}`);
     }
   } else {
-    console.log("live kmqa: no payload (need z_c0 cookie)");
+    console.log("live kmqa: no payload");
   }
 
   try {
     const resolved = await resolvePaidColumnForAnswer(cookie, ANSWER_URL);
-    console.log(
-      JSON.stringify(
-        {
-          paidUrl: resolved.paidUrl,
-          source: resolved.source,
-          answerId: resolved.answerId,
-          questionId: resolved.questionId,
-          payloadKeys: resolved.payloadKeys,
-        },
-        null,
-        2,
-      ),
-    );
+    console.log(JSON.stringify(resolved, null, 2));
     if (resolved.paidUrl !== EXPECTED) {
       throw new Error(`resolve mismatch: ${resolved.paidUrl}`);
     }

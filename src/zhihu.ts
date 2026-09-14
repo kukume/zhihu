@@ -1,5 +1,5 @@
 import { htmlToMarkdown, htmlToPlain, htmlToSegments } from "./html";
-import { parseZhihuJson, snowflakeIdsFromNamedBags } from "./json";
+import { parseZhihuJson } from "./json";
 import { hasLogin, loadCookieHeader, parseCookieHeader, zhihuHeaders } from "./cookies";
 
 export function requireLogin(cookie: string): void {
@@ -133,132 +133,30 @@ function isArticleType(type: string): boolean {
 }
 
 const ANSWER_INCLUDE =
-  "content,question,question.title,question.detail,author.name,answer_type,label_info,paid_info,paid_info_content,thumbnail_info,attachment,extra,extras,biz_ext,relationship,commercial_info";
-const QUESTION_ANSWER_INCLUDE =
-  "data[*].is_normal,answer_type,label_info,paid_info,paid_info_content,extra,extras,biz_ext,thumbnail_info,attachment,content,excerpt,question";
-const PAID_BAG_KEYS = [
-  "paid_info",
-  "paid_info_content",
-  "extra",
-  "extras",
-  "biz_ext",
-  "thumbnail_info",
-  "attachment",
-  "commercial_info",
-  "label_info",
-  "relationship",
-];
-
-export type AnswerPayload = {
-  data: Json;
-  raw: string;
-};
+  "content,question,question.title,question.detail,author.name,answer_type,label_info";
 
 function asJson(value: unknown): Json | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   return value as Json;
 }
 
-function mergePaidFields(base: Json, extra: Json): Json {
-  const out: Json = { ...base };
-  for (const key of PAID_BAG_KEYS) {
-    if (out[key] == null && extra[key] != null) out[key] = extra[key];
-  }
-  if (out.answer_type == null && extra.answer_type != null) out.answer_type = extra.answer_type;
-  if (out.label_info == null && extra.label_info != null) out.label_info = extra.label_info;
-  return out;
-}
-
-async function readAnswerResponse(resp: Response): Promise<AnswerPayload | null> {
-  if (resp.status === 401 || resp.status === 403) {
-    throw new HttpError(401, "未登录");
-  }
-  if (resp.status !== 200) return null;
-  const raw = await resp.text();
-  try {
-    const data = asJson(parseZhihuJson(raw));
-    if (!data) return null;
-    return { data, raw };
-  } catch {
-    return null;
-  }
-}
-
-export async function fetchAnswerPayload(cookie: string, id: string, questionId?: string): Promise<AnswerPayload | null> {
+export async function fetchAnswerJson(cookie: string, id: string): Promise<Json | null> {
   const urls = [
     `https://www.zhihu.com/api/v4/answers/${id}?include=${ANSWER_INCLUDE}`,
     `https://api.zhihu.com/answers/${id}?include=${ANSWER_INCLUDE}`,
   ];
-  let first: AnswerPayload | null = null;
   for (const url of urls) {
     const resp = await zhihuGet(url, cookie);
-    const payload = await readAnswerResponse(resp);
-    if (!payload) continue;
-    if (!first) first = payload;
-    if (payload.data.paid_info != null || payload.data.paid_info_content != null) return payload;
-  }
-
-  const qid =
-    questionId ||
-    (first ? String(((first.data.question as Json) ?? {}).id ?? "") : "");
-  if (qid && /^\d+$/.test(qid)) {
-    const listed = await fetchAnswerInQuestion(cookie, qid, id);
-    if (listed) {
-      if (!first) return listed;
-      return {
-        data: mergePaidFields(first.data, listed.data),
-        raw: `${first.raw}\n${listed.raw}`,
-      };
-    }
-  }
-  return first;
-}
-
-async function fetchAnswerInQuestion(cookie: string, questionId: string, answerId: string): Promise<AnswerPayload | null> {
-  let nextUrl: string | null =
-    `https://www.zhihu.com/api/v4/questions/${questionId}/answers?include=${encodeURIComponent(QUESTION_ANSWER_INCLUDE)}&limit=20&offset=0&platform=desktop&sort_by=default`;
-  for (let page = 0; page < 8 && nextUrl; page++) {
-    const resp = await zhihuGet(nextUrl, cookie);
     if (resp.status === 401 || resp.status === 403) throw new HttpError(401, "未登录");
-    if (resp.status !== 200) return null;
-    const raw = await resp.text();
-    let body: Json | null;
+    if (resp.status !== 200) continue;
     try {
-      body = asJson(parseZhihuJson(raw));
+      const data = asJson(parseZhihuJson(await resp.text()));
+      if (data) return data;
     } catch {
       return null;
     }
-    if (!body) return null;
-    for (const item of (body.data as Json[]) ?? []) {
-      if (!item || typeof item !== "object") continue;
-      const rec = item as Json;
-      if (String(rec.id ?? "") === answerId) return { data: rec, raw };
-    }
-    const paging = (body.paging as Json) ?? {};
-    if (paging.is_end === true) break;
-    nextUrl = String(paging.next ?? "") || null;
   }
   return null;
-}
-
-export function candidateColumnIdsFromAnswer(raw: string, exclude: string[]): string[] {
-  const skip = new Set(exclude.filter(Boolean));
-  const fromBags = snowflakeIdsFromNamedBags(raw, PAID_BAG_KEYS).filter((id) => !skip.has(id));
-  if (fromBags.length) return fromBags;
-  const seen = new Set<string>();
-  const ids: string[] = [];
-  for (const match of raw.matchAll(/\d{16,}/g)) {
-    const id = match[0];
-    if (skip.has(id) || seen.has(id)) continue;
-    seen.add(id);
-    ids.push(id);
-  }
-  return ids;
-}
-
-export async function fetchAnswerJson(cookie: string, id: string): Promise<Json | null> {
-  const payload = await fetchAnswerPayload(cookie, id);
-  return payload?.data ?? null;
 }
 
 const KMQA_PAID_CONTENT_INCLUDE = "goods_card,btn_info,za_info,ab_param,benefits_pics";
@@ -280,66 +178,6 @@ export async function fetchAnswerPaidContent(
     const data = await zhihuJson(resp);
     if (data) return data;
   }
-  return null;
-}
-
-function isCatalogHost(hostname: string): boolean {
-  const host = hostname.toLowerCase();
-  return host === "api.zhihu.com" || host === "www.zhihu.com";
-}
-
-export async function fetchPaidColumnCatalog(columnId: string, cookie = ""): Promise<Json | null> {
-  if (!/^\d+$/.test(columnId)) return null;
-  const starts = [
-    `https://api.zhihu.com/remix/well/${columnId}/catalog?limit=20&offset=0`,
-    `https://www.zhihu.com/api/v4/remix/well/${columnId}/catalog?limit=20&offset=0`,
-  ];
-
-  for (const start of starts) {
-    const items: Json[] = [];
-    let extra: Json = {};
-    let nextUrl: string | null = start;
-    let ok = true;
-
-    for (let i = 0; i < 20 && nextUrl; i++) {
-      let parsed: URL;
-      try {
-        parsed = new URL(nextUrl);
-      } catch {
-        ok = false;
-        break;
-      }
-      if (parsed.protocol !== "https:" || !isCatalogHost(parsed.hostname)) {
-        ok = false;
-        break;
-      }
-      const resp = await zhihuGet(parsed.toString(), cookie);
-      if (resp.status !== 200) {
-        ok = false;
-        break;
-      }
-      const body = await zhihuJson(resp);
-      if (!body) {
-        ok = false;
-        break;
-      }
-      extra = ((body.extra as Json) ?? extra) as Json;
-      const page = (body.data as Json[]) ?? [];
-      items.push(...page);
-      const paging = (body.paging as Json) ?? {};
-      if (paging.is_end === true || paging.has_next === false) break;
-      const next = String(paging.next ?? "");
-      if (next) {
-        nextUrl = next;
-        continue;
-      }
-      if (!page.length) break;
-      nextUrl = `https://api.zhihu.com/remix/well/${columnId}/catalog?limit=20&offset=${items.length}`;
-    }
-
-    if (ok && items.length) return { data: items, extra };
-  }
-
   return null;
 }
 
