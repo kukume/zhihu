@@ -93,11 +93,6 @@ async function main() {
     console.log("live kmqa: no payload (need z_c0 cookie)");
   }
 
-  if (!cookie) {
-    console.log("no cookie; skip resolvePaidColumnForAnswer");
-    return;
-  }
-
   try {
     const resolved = await resolvePaidColumnForAnswer(cookie, ANSWER_URL);
     console.log(
