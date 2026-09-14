@@ -47,41 +47,31 @@ export default {
       if (path === "/recommend") {
         const cookie = await getCookieOrThrow(env);
         const limit = Math.min(20, Math.max(1, Number(url.searchParams.get("limit") ?? 6) || 6));
-        const full = ["1", "true", "yes"].includes(url.searchParams.get("full") ?? "");
         const recs = await fetchRecommendations(cookie, limit);
-        const data = [];
-        for (const r of recs) {
-          const entry: Record<string, unknown> = {
-            type: r.type,
-            id: r.id,
-            title: r.title ?? "",
-            author: r.author ?? "",
-            url: r.url ?? "",
-            created_time: r.created_time,
-            updated_time: r.updated_time,
-            voteup: r.voteup,
-            comments: r.comments,
-          };
-          const detail = await fetchFullContent(cookie, r);
-          if (detail) {
-            entry.content_length = detail.plain_text.length;
-            entry.segments = detail.segments;
-            if (detail.question_detail) entry.question_detail = detail.question_detail;
-            if (full) {
-              entry.content = detail.plain_text;
-              entry.html = detail.html;
-              entry.markdown = detail.markdown;
-            } else {
-              entry.preview = detail.plain_text.slice(0, 300);
-            }
-          } else {
-            entry.segments = [];
-            entry.content_length = 0;
-            entry[full ? "content" : "preview"] = null;
-          }
-          data.push(entry);
-        }
-        return json({ count: data.length, data });
+        return json({ count: recs.length, data: recs });
+      }
+
+      const recommendItemMatch = path.match(/^\/recommend\/([^/]+)$/);
+      if (recommendItemMatch) {
+        const cookie = await getCookieOrThrow(env);
+        const id = recommendItemMatch[1];
+        const type = (url.searchParams.get("type") ?? "").trim();
+        if (!type) return json({ error: "Missing 'type' query parameter" }, 400);
+        const detail = await fetchFullContent(cookie, { type, id });
+        if (!detail) return json({ error: "Content not found" }, 404);
+        const entry: Record<string, unknown> = {
+          type: detail.type,
+          id,
+          title: detail.title,
+          author: detail.author,
+          content_length: detail.plain_text.length,
+          segments: detail.segments,
+          content: detail.plain_text,
+          html: detail.html,
+          markdown: detail.markdown,
+        };
+        if (detail.question_detail) entry.question_detail = detail.question_detail;
+        return json(entry);
       }
 
       const commentsMatch = path.match(/^\/comments\/([^/]+)$/);
