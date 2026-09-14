@@ -17,16 +17,16 @@ import {
   looksLikeCssDump,
   type Segment,
 } from "./html";
+import { resolvePaidColumnUrlFromMeta } from "./catalog";
 import {
   assertSafeZhihuUrl,
   isPaidAnswerPayload,
-  paidColumnUrlFromAnswerMeta,
   parseZhihuUrl,
   targetId,
   targetTypeLabel,
   type ZhihuTarget,
 } from "./urls";
-import { fetchAnswerJson, getCookieOrThrow, HttpError } from "./zhihu";
+import { fetchAnswerJson, fetchPaidColumnCatalog, getCookieOrThrow, HttpError } from "./zhihu";
 
 export type DecodeResult = {
   url: string;
@@ -214,13 +214,21 @@ async function resolvePaidColumnUrl(cookie: string, target: Extract<ZhihuTarget,
   if (!payload || !isPaidAnswerPayload(payload)) {
     throw new HttpError(400, "不是盐选内容");
   }
-  const fromApi = paidColumnUrlFromAnswerMeta(payload);
+  const fetchCatalog = (columnId: string) => fetchPaidColumnCatalog(columnId, cookie);
+  const fromApi = await resolvePaidColumnUrlFromMeta(payload, {
+    answerId: target.id,
+    title: String(((payload.question as { title?: unknown }) ?? {}).title ?? ""),
+    fetchCatalog,
+  });
   if (fromApi) return fromApi;
 
   const page = await httpFetchHtml(target.url, cookie);
   if (looksLikeChallenge(page.html, page.status)) return null;
   const entity = extractAnswerEntity(page.html, target.id);
-  return paidColumnUrlFromAnswerMeta(entity);
+  return resolvePaidColumnUrlFromMeta(entity, {
+    answerId: target.id,
+    fetchCatalog,
+  });
 }
 
 export async function decodeZhihuUrl(env: Env, url: string): Promise<DecodeResult> {
