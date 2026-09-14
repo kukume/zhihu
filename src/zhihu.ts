@@ -85,7 +85,6 @@ export async function fetchRecommendations(cookie: string, limit: number) {
         entry.title = t.title ?? "";
         entry.author = author.name ?? "匿名";
         entry.url = t.url ?? `https://zhuanlan.zhihu.com/p/${t.id}`;
-        entry._raw_target = t;
         entry.created_time = t.created;
         entry.updated_time = t.updated;
       } else if (kind === "pin") {
@@ -105,6 +104,18 @@ export async function fetchRecommendations(cookie: string, limit: number) {
   return all.slice(0, limit);
 }
 
+function isAnswerType(type: string): boolean {
+  return type === "回答" || type === "盐选小说" || type === "answer";
+}
+
+function isQuestionType(type: string): boolean {
+  return type === "问题" || type === "question";
+}
+
+function isArticleType(type: string): boolean {
+  return type === "文章" || type === "article";
+}
+
 export async function fetchFullContent(cookie: string, item: Json) {
   const t = String(item.type ?? "");
   let html: string | null = null;
@@ -112,7 +123,7 @@ export async function fetchFullContent(cookie: string, item: Json) {
   let author = "";
   let qDetail = "";
 
-  if (t === "回答" || t === "盐选小说") {
+  if (isAnswerType(t)) {
     const resp = await zhihuGet(
       `https://www.zhihu.com/api/v4/answers/${item.id}?include=content,question.title,question.detail,author.name`,
       cookie,
@@ -123,7 +134,7 @@ export async function fetchFullContent(cookie: string, item: Json) {
     title = String(((data.question as Json) ?? {}).title ?? "");
     author = String(((data.author as Json) ?? {}).name ?? "");
     qDetail = String(((data.question as Json) ?? {}).detail ?? "");
-  } else if (t === "问题") {
+  } else if (isQuestionType(t)) {
     const resp = await zhihuGet(
       `https://www.zhihu.com/api/v4/questions/${item.id}?include=title,detail,author.name`,
       cookie,
@@ -133,20 +144,13 @@ export async function fetchFullContent(cookie: string, item: Json) {
     html = String(data.detail ?? "");
     title = String(data.title ?? "");
     author = String(((data.author as Json) ?? {}).name ?? "");
-  } else if (t === "文章") {
-    const raw = ((item._raw_target as Json) ?? {}).content;
-    if (typeof raw === "string" && raw) {
-      html = raw;
-      title = String(item.title ?? "");
-      author = String(item.author ?? "");
-    } else {
-      const resp = await zhihuGet(`https://api.zhihu.com/articles/${item.id}`, cookie);
-      if (resp.status !== 200) return null;
-      const data = (await resp.json()) as Json;
-      html = String(data.content ?? "");
-      title = String(data.title ?? "");
-      author = String(((data.author as Json) ?? {}).name ?? "");
-    }
+  } else if (isArticleType(t)) {
+    const resp = await zhihuGet(`https://api.zhihu.com/articles/${item.id}`, cookie);
+    if (resp.status !== 200) return null;
+    const data = (await resp.json()) as Json;
+    html = String(data.content ?? "");
+    title = String(data.title ?? "");
+    author = String(((data.author as Json) ?? {}).name ?? "");
   }
 
   if (html == null) return null;

@@ -13,16 +13,30 @@ Cookie 存在 KV，键名：`zhihu_cookie`
 
 ## GET `/recommend`
 
+只返回推荐列表，不拉取全文。
+
 Query：
 
 | 参数 | 默认 | 说明 |
 | --- | --- | --- |
 | `limit` | `6` | 条数，1–20 |
-| `full` | 无 | `1` / `true` / `yes` 时返回全文 |
 
 ```
 GET /recommend?limit=6
-GET /recommend?limit=6&full=1
+```
+
+## GET `/recommend/:id`
+
+按推荐条目补全文。`type` 使用 `/recommend` 返回的 `type`（如 `回答`、`问题`、`文章`、`盐选小说`）。结果包含 `segments`、`content`、`html`、`markdown`。
+
+Query：
+
+| 参数 | 默认 | 说明 |
+| --- | --- | --- |
+| `type` | 必填 | 条目类型 |
+
+```
+GET /recommend/123456789?type=回答
 ```
 
 ## GET `/comments/:answer_id`
