@@ -17,6 +17,12 @@ const URL_META_KEYS = new Set([
   "href",
   "link",
   "canonical_url",
+  "landing_url",
+  "jump_url",
+  "native_url",
+  "app_url",
+  "schema",
+  "deeplink",
 ]);
 const SKIP_ROOT_KEYS = new Set([
   "content",
@@ -29,8 +35,28 @@ const SKIP_ROOT_KEYS = new Set([
   "text",
   "detail",
 ]);
-const COLUMN_BAG_KEYS = new Set(["sku", "paid_info", "paid_column", "column", "paid_info_content"]);
-const COLUMN_ID_KEYS = ["column_id", "paid_column_id", "columnId", "sku_id", "business_id", "skuId"];
+const COLUMN_BAG_KEYS = new Set([
+  "sku",
+  "paid_info",
+  "paid_column",
+  "column",
+  "paid_info_content",
+  "extras",
+  "biz_ext",
+  "extra",
+]);
+const COLUMN_ID_KEYS = [
+  "column_id",
+  "paid_column_id",
+  "columnId",
+  "sku_id",
+  "business_id",
+  "skuId",
+  "product_id",
+  "well_id",
+  "remix_id",
+  "resource_id",
+];
 const SECTION_ID_KEYS = ["section_id", "paid_section_id", "sectionId", "track_id"];
 
 export type PaidColumnRef = {
