@@ -1,5 +1,5 @@
 import { browserFetchPaid, browserMapGlyphs, type GlyphMapResult } from "./browser";
-import { loadCookieHeader, zhihuHeaders } from "./cookies";
+import { loadCookieHeader } from "./cookies";
 import {
   applyMapping,
   extractBase64Fonts,
@@ -8,7 +8,6 @@ import {
   pickContentFont,
 } from "./fonts";
 import {
-  extractAnswerEntity,
   extractArticleHtml,
   extractTitle,
   htmlToMarkdown,
@@ -17,16 +16,14 @@ import {
   looksLikeCssDump,
   type Segment,
 } from "./html";
-import { paidColumnUrlFromCatalog, resolvePaidColumnUrlFromMeta } from "./catalog";
+import { httpFetchHtml, resolvePaidColumnForAnswer } from "./paid-column";
 import {
-  assertSafeZhihuUrl,
-  isPaidAnswerPayload,
   parseZhihuUrl,
   targetId,
   targetTypeLabel,
   type ZhihuTarget,
 } from "./urls";
-import { candidateColumnIdsFromAnswer, fetchAnswerPayload, fetchPaidColumnCatalog, getCookieOrThrow, HttpError } from "./zhihu";
+import { getCookieOrThrow, HttpError } from "./zhihu";
 
 export type DecodeResult = {
   url: string;
@@ -48,29 +45,6 @@ export type DecodeResult = {
   warnings: string[];
   cookie_refreshed: boolean;
 };
-
-async function httpFetchHtml(url: string, cookie: string): Promise<{ status: number; html: string }> {
-  let current = assertSafeZhihuUrl(url);
-  for (let i = 0; i < 5; i++) {
-    const resp = await fetch(current, {
-      headers: zhihuHeaders(cookie, "text/html,application/xhtml+xml;q=0.9,*/*;q=0.8"),
-      redirect: "manual",
-    });
-    if (resp.status >= 300 && resp.status < 400) {
-      const location = resp.headers.get("Location");
-      if (!location) throw new HttpError(502, "Invalid redirect");
-      try {
-        current = assertSafeZhihuUrl(new URL(location, current).toString());
-      } catch {
-        throw new HttpError(502, "Invalid redirect");
-      }
-      continue;
-    }
-    const html = await resp.text();
-    return { status: resp.status, html };
-  }
-  throw new HttpError(502, "Too many redirects");
-}
 
 function stripLegalFooter(text: string): string {
   return text
@@ -209,55 +183,6 @@ async function followPaidColumn(
   };
 }
 
-async function resolvePaidColumnUrl(cookie: string, target: Extract<ZhihuTarget, { kind: "answer" }>): Promise<string> {
-  const fetched = await fetchAnswerPayload(cookie, target.id, target.questionId);
-  const payload = fetched?.data ?? null;
-  if (!payload || !isPaidAnswerPayload(payload)) {
-    throw new HttpError(400, "不是盐选内容");
-  }
-  const fetchCatalog = (columnId: string) => fetchPaidColumnCatalog(columnId, cookie);
-  const title = String(((payload.question as { title?: unknown }) ?? {}).title ?? "");
-  const fromApi = await resolvePaidColumnUrlFromMeta(payload, {
-    answerId: target.id,
-    title,
-    fetchCatalog,
-  });
-  if (fromApi) return fromApi;
-
-  const questionId = String(((payload.question as { id?: unknown }) ?? {}).id ?? target.questionId ?? "");
-  const candidates = candidateColumnIdsFromAnswer(fetched?.raw ?? "", payload, [target.id, questionId]);
-  console.log(
-    `paid-column answer=${target.id} keys=${Object.keys(payload).join(",")} extras=${JSON.stringify(payload.extras ?? null)} biz_ext=${JSON.stringify(payload.biz_ext ?? null)} candidates=${candidates.join(",")}`,
-  );
-  for (const columnId of candidates.slice(0, 8)) {
-    const catalog = await fetchCatalog(columnId);
-    const url = paidColumnUrlFromCatalog(columnId, catalog, { answerId: target.id, title });
-    if (url) return url;
-  }
-
-  const page = await httpFetchHtml(target.url, cookie);
-  if (looksLikeChallenge(page.html, page.status)) {
-    throw new HttpError(400, "未找到对应盐选专栏", {
-      candidates,
-      extras: payload.extras ?? null,
-      biz_ext: payload.biz_ext ?? null,
-      payload_keys: Object.keys(payload),
-    });
-  }
-  const entity = extractAnswerEntity(page.html, target.id);
-  const fromHtml = await resolvePaidColumnUrlFromMeta(entity, {
-    answerId: target.id,
-    fetchCatalog,
-  });
-  if (fromHtml) return fromHtml;
-  throw new HttpError(400, "未找到对应盐选专栏", {
-    candidates,
-    extras: payload.extras ?? null,
-    biz_ext: payload.biz_ext ?? null,
-    payload_keys: Object.keys(payload),
-  });
-}
-
 export async function decodeZhihuUrl(env: Env, url: string): Promise<DecodeResult> {
   let target: ZhihuTarget;
   try {
@@ -272,8 +197,8 @@ export async function decodeZhihuUrl(env: Env, url: string): Promise<DecodeResul
 
   if (target.kind === "answer") {
     const cookie = await getCookieOrThrow(env);
-    const paidUrl = await resolvePaidColumnUrl(cookie, target);
-    return followPaidColumn(env, target, paidUrl, []);
+    const resolved = await resolvePaidColumnForAnswer(cookie, url);
+    return followPaidColumn(env, target, resolved.paidUrl, []);
   }
 
   throw new HttpError(400, "不是盐选内容");

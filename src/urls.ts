@@ -297,6 +297,49 @@ export function paidColumnUrlFromAnswerMeta(data: Record<string, unknown> | null
   return paidColumnUrlFromIds(ref.columnId, ref.sectionId);
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function snowflakeId(value: unknown): string {
+  if (typeof value === "string" && /^\d+$/.test(value)) return value;
+  if (typeof value === "number" && Number.isSafeInteger(value)) return String(value);
+  return "";
+}
+
+function paidUrlFromMaybeString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const ref = paidColumnRefFromString(value);
+  if (!ref?.sectionId) return null;
+  return paidColumnUrlFromIds(ref.columnId, ref.sectionId);
+}
+
+/** kmqa `/answers/:id/paid_content` already includes the market URL with both IDs. */
+export function paidColumnUrlFromPaidContent(data: Record<string, unknown> | null | undefined): string | null {
+  if (!data) return null;
+  const next = asRecord(data.next_section_info);
+  const intro = asRecord(data.new_intro_card);
+  for (const url of [next?.url, intro?.url]) {
+    const paid = paidUrlFromMaybeString(url);
+    if (paid) return paid;
+  }
+  const fromMeta = paidColumnUrlFromAnswerMeta(data);
+  if (fromMeta) return fromMeta;
+  const shelves = asRecord(data.shelves_info);
+  const za = asRecord(data.za_info);
+  const goods = asRecord(asRecord(data.goods_card)?.body);
+  const progress = asRecord(data.progress_info);
+  const columnId =
+    snowflakeId(shelves?.business_id) ||
+    snowflakeId(za?.id) ||
+    snowflakeId(za?.token) ||
+    snowflakeId(goods?.content_id);
+  const sectionId = snowflakeId(progress?.unit_id);
+  if (columnId && sectionId) return paidColumnUrlFromIds(columnId, sectionId);
+  return null;
+}
+
 export function isPaidAnswerPayload(data: Record<string, unknown> | null | undefined): boolean {
   if (!data) return false;
   if (String(data.answer_type ?? "") === "paid") return true;

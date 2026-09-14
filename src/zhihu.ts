@@ -222,7 +222,12 @@ async function fetchAnswerInQuestion(cookie: string, questionId: string, answerI
     if (resp.status === 401 || resp.status === 403) throw new HttpError(401, "未登录");
     if (resp.status !== 200) return null;
     const raw = await resp.text();
-    const body = asJson(parseZhihuJson(raw));
+    let body: Json | null;
+    try {
+      body = asJson(parseZhihuJson(raw));
+    } catch {
+      return null;
+    }
     if (!body) return null;
     for (const item of (body.data as Json[]) ?? []) {
       if (!item || typeof item !== "object") continue;
@@ -236,7 +241,7 @@ async function fetchAnswerInQuestion(cookie: string, questionId: string, answerI
   return null;
 }
 
-export function candidateColumnIdsFromAnswer(raw: string, data: Json, exclude: string[]): string[] {
+export function candidateColumnIdsFromAnswer(raw: string, exclude: string[]): string[] {
   const skip = new Set(exclude.filter(Boolean));
   const fromBags = snowflakeIdsFromNamedBags(raw, PAID_BAG_KEYS).filter((id) => !skip.has(id));
   if (fromBags.length) return fromBags;
@@ -254,6 +259,28 @@ export function candidateColumnIdsFromAnswer(raw: string, data: Json, exclude: s
 export async function fetchAnswerJson(cookie: string, id: string): Promise<Json | null> {
   const payload = await fetchAnswerPayload(cookie, id);
   return payload?.data ?? null;
+}
+
+const KMQA_PAID_CONTENT_INCLUDE = "goods_card,btn_info,za_info,ab_param,benefits_pics";
+
+export async function fetchAnswerPaidContent(
+  cookie: string,
+  answerId: string,
+): Promise<Json | null> {
+  if (!/^\d+$/.test(answerId)) return null;
+  const include = encodeURIComponent(KMQA_PAID_CONTENT_INCLUDE);
+  const urls = [
+    `https://api.zhihu.com/kmqa/answers/${answerId}/paid_content?include=${include}`,
+    `https://www.zhihu.com/api/v4/kmqa/answers/${answerId}/paid_content?include=${include}`,
+  ];
+  for (const url of urls) {
+    const resp = await zhihuGet(url, cookie);
+    if (resp.status === 401) throw new HttpError(401, "未登录");
+    if (resp.status !== 200) continue;
+    const data = await zhihuJson(resp);
+    if (data) return data;
+  }
+  return null;
 }
 
 function isCatalogHost(hostname: string): boolean {
