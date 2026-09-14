@@ -1,4 +1,5 @@
 import { htmlToMarkdown, htmlToPlain, htmlToSegments } from "./html";
+import { parseZhihuJson } from "./json";
 import { hasLogin, loadCookieHeader, parseCookieHeader, zhihuHeaders } from "./cookies";
 
 export function requireLogin(cookie: string): void {
@@ -23,6 +24,17 @@ async function zhihuGet(url: string, cookie: string): Promise<Response> {
     headers: zhihuHeaders(cookie),
     redirect: "follow",
   });
+}
+
+async function zhihuJson(resp: Response): Promise<Json | null> {
+  const text = await resp.text();
+  try {
+    const data = parseZhihuJson(text);
+    if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+    return data as Json;
+  } catch {
+    return null;
+  }
 }
 
 function contentTypeLabel(target: Json): string {
@@ -54,7 +66,10 @@ export async function fetchRecommendations(cookie: string, limit: number) {
     if (resp.status !== 200) {
       throw new HttpError(resp.status, `推荐接口失败: ${resp.status}`);
     }
-    const data = (await resp.json()) as Json;
+    const data = await zhihuJson(resp);
+    if (!data) {
+      throw new HttpError(resp.status, `推荐接口失败: ${resp.status}`);
+    }
     const items = (data.data as Json[]) ?? [];
     for (const item of items) {
       const t = (item.target as Json) ?? {};
@@ -118,14 +133,14 @@ function isArticleType(type: string): boolean {
 
 export async function fetchAnswerJson(cookie: string, id: string): Promise<Json | null> {
   const resp = await zhihuGet(
-    `https://www.zhihu.com/api/v4/answers/${id}?include=content,question.title,question.detail,author.name,answer_type,label_info,paid_info,paid_info_content,thumbnail_info,attachment,extra`,
+    `https://www.zhihu.com/api/v4/answers/${id}?include=content,question.title,question.detail,author.name,answer_type,label_info,paid_info,paid_info_content,thumbnail_info,attachment,extra,relationship,commercial_info`,
     cookie,
   );
   if (resp.status === 401 || resp.status === 403) {
     throw new HttpError(401, "未登录");
   }
   if (resp.status !== 200) return null;
-  return (await resp.json()) as Json;
+  return zhihuJson(resp);
 }
 
 function isCatalogHost(hostname: string): boolean {
@@ -135,37 +150,57 @@ function isCatalogHost(hostname: string): boolean {
 
 export async function fetchPaidColumnCatalog(columnId: string, cookie = ""): Promise<Json | null> {
   if (!/^\d+$/.test(columnId)) return null;
-  const items: Json[] = [];
-  let extra: Json = {};
-  let nextUrl: string | null = `https://api.zhihu.com/remix/well/${columnId}/catalog?limit=20&offset=0`;
+  const starts = [
+    `https://api.zhihu.com/remix/well/${columnId}/catalog?limit=20&offset=0`,
+    `https://www.zhihu.com/api/v4/remix/well/${columnId}/catalog?limit=20&offset=0`,
+  ];
 
-  for (let i = 0; i < 20 && nextUrl; i++) {
-    let parsed: URL;
-    try {
-      parsed = new URL(nextUrl);
-    } catch {
-      return null;
+  for (const start of starts) {
+    const items: Json[] = [];
+    let extra: Json = {};
+    let nextUrl: string | null = start;
+    let ok = true;
+
+    for (let i = 0; i < 20 && nextUrl; i++) {
+      let parsed: URL;
+      try {
+        parsed = new URL(nextUrl);
+      } catch {
+        ok = false;
+        break;
+      }
+      if (parsed.protocol !== "https:" || !isCatalogHost(parsed.hostname)) {
+        ok = false;
+        break;
+      }
+      const resp = await zhihuGet(parsed.toString(), cookie);
+      if (resp.status !== 200) {
+        ok = false;
+        break;
+      }
+      const body = await zhihuJson(resp);
+      if (!body) {
+        ok = false;
+        break;
+      }
+      extra = ((body.extra as Json) ?? extra) as Json;
+      const page = (body.data as Json[]) ?? [];
+      items.push(...page);
+      const paging = (body.paging as Json) ?? {};
+      if (paging.is_end === true || paging.has_next === false) break;
+      const next = String(paging.next ?? "");
+      if (next) {
+        nextUrl = next;
+        continue;
+      }
+      if (!page.length) break;
+      nextUrl = `https://api.zhihu.com/remix/well/${columnId}/catalog?limit=20&offset=${items.length}`;
     }
-    if (parsed.protocol !== "https:" || !isCatalogHost(parsed.hostname)) return null;
-    const resp = await zhihuGet(parsed.toString(), cookie);
-    if (resp.status !== 200) return null;
-    const body = (await resp.json()) as Json;
-    extra = ((body.extra as Json) ?? extra) as Json;
-    const page = (body.data as Json[]) ?? [];
-    items.push(...page);
-    const paging = (body.paging as Json) ?? {};
-    if (paging.is_end === true || paging.has_next === false) break;
-    const next = String(paging.next ?? "");
-    if (next) {
-      nextUrl = next;
-      continue;
-    }
-    if (!page.length) break;
-    nextUrl = `https://api.zhihu.com/remix/well/${columnId}/catalog?limit=20&offset=${items.length}`;
+
+    if (ok && items.length) return { data: items, extra };
   }
 
-  if (!items.length) return null;
-  return { data: items, extra };
+  return null;
 }
 
 export async function fetchFullContent(cookie: string, item: Json) {
@@ -188,14 +223,16 @@ export async function fetchFullContent(cookie: string, item: Json) {
       cookie,
     );
     if (resp.status !== 200) return null;
-    const data = (await resp.json()) as Json;
+    const data = await zhihuJson(resp);
+    if (!data) return null;
     html = String(data.detail ?? "");
     title = String(data.title ?? "");
     author = String(((data.author as Json) ?? {}).name ?? "");
   } else if (isArticleType(t)) {
     const resp = await zhihuGet(`https://api.zhihu.com/articles/${item.id}`, cookie);
     if (resp.status !== 200) return null;
-    const data = (await resp.json()) as Json;
+    const data = await zhihuJson(resp);
+    if (!data) return null;
     html = String(data.content ?? "");
     title = String(data.title ?? "");
     author = String(((data.author as Json) ?? {}).name ?? "");
@@ -267,7 +304,7 @@ export async function fetchComments(
   url.searchParams.set("order_by", orderBy);
   const resp = await zhihuGet(url.toString(), cookie);
   if (resp.status !== 200) return { comments: [] as Json[], paging: {} as Json };
-  const data = (await resp.json()) as Json;
+  const data = (await zhihuJson(resp)) ?? {};
   const paging = (data.paging as Json) ?? {};
   const nextUrl = String(paging.next ?? "");
   const nextOffset = nextUrl.match(/offset=([^&]+)/)?.[1] ?? null;
@@ -298,7 +335,7 @@ export async function fetchChildComments(
   url.searchParams.set("order_by", "ts");
   const resp = await zhihuGet(url.toString(), cookie);
   if (resp.status !== 200) return { comments: [] as Json[], paging: {} as Json };
-  const data = (await resp.json()) as Json;
+  const data = (await zhihuJson(resp)) ?? {};
   const paging = (data.paging as Json) ?? {};
   const nextUrl = String(paging.next ?? "");
   const nextOffset = nextUrl.match(/offset=([^&]+)/)?.[1] ?? null;

@@ -3,14 +3,6 @@
 Cookie 存在 KV，键名：`zhihu_cookie`  
 值为一行 Cookie 头：`z_c0=...; __zse_ck=...`
 
-不要把 Cookie 发到聊天、Issue 或 PR 里。Agent 也不会去读 KV 里的明文。需要测试时，Worker 自己从 KV 取 Cookie；本地写入：
-
-```bash
-npx wrangler kv key put zhihu_cookie --binding ZHIHU_KV --remote --path cookie.txt
-```
-
-`cookie.txt` 已在 `.gitignore`。Dashboard 的 KV 编辑器也可以改这个键。改完后看 `GET /` 的 `logged_in` 即可，接口不会回传 Cookie。
-
 ## GET `/`
 
 无请求体。返回是否已登录。

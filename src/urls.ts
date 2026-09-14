@@ -18,7 +18,7 @@ const URL_META_KEYS = new Set([
   "link",
   "canonical_url",
 ]);
-const SKIP_META_KEYS = new Set([
+const SKIP_ROOT_KEYS = new Set([
   "content",
   "excerpt",
   "excerpt_new",
@@ -29,6 +29,7 @@ const SKIP_META_KEYS = new Set([
   "text",
   "detail",
 ]);
+const COLUMN_BAG_KEYS = new Set(["sku", "paid_info", "paid_column", "column", "paid_info_content"]);
 const COLUMN_ID_KEYS = ["column_id", "paid_column_id", "columnId", "sku_id", "business_id", "skuId"];
 const SECTION_ID_KEYS = ["section_id", "paid_section_id", "sectionId", "track_id"];
 
@@ -154,6 +155,25 @@ export function paidColumnRefFromString(value: string): PaidColumnRef | null {
   return null;
 }
 
+function refsFromText(value: string): PaidColumnRef | null {
+  const direct = paidColumnRefFromString(value);
+  if (direct) return direct;
+  let best: PaidColumnRef | null = null;
+  for (const match of value.matchAll(/https:\/\/[^\s"'<>]+/gi)) {
+    best = betterRef(best, paidColumnRefFromString(match[0]));
+  }
+  for (const match of value.matchAll(/\bhref=["']([^"']+)["']/gi)) {
+    const href = match[1];
+    if (!href) continue;
+    try {
+      best = betterRef(best, paidColumnRefFromString(new URL(href, "https://www.zhihu.com").toString()));
+    } catch {
+      /* ignore */
+    }
+  }
+  return best;
+}
+
 function pickId(obj: Record<string, unknown>, keys: string[]): string | null {
   for (const key of keys) {
     const value = obj[key];
@@ -182,13 +202,15 @@ function refFromMetaObject(
   obj: Record<string, unknown>,
   answerId?: string | null,
   questionId?: string | null,
+  parentKey?: string,
 ): PaidColumnRef | null {
   let best: PaidColumnRef | null = null;
   for (const key of URL_META_KEYS) {
     const value = obj[key];
-    if (typeof value === "string") best = betterRef(best, paidColumnRefFromString(value));
+    if (typeof value === "string") best = betterRef(best, refsFromText(value));
   }
-  const columnId = usableColumnId(pickId(obj, COLUMN_ID_KEYS), answerId, questionId);
+  const idKeys = parentKey && COLUMN_BAG_KEYS.has(parentKey) ? ["id", ...COLUMN_ID_KEYS] : COLUMN_ID_KEYS;
+  const columnId = usableColumnId(pickId(obj, idKeys), answerId, questionId);
   const sectionId = pickId(obj, SECTION_ID_KEYS);
   if (columnId) {
     best = betterRef(best, sectionId && sectionId !== answerId ? { columnId, sectionId } : { columnId });
@@ -213,20 +235,21 @@ function walkMeta(
   seen: Set<unknown>,
   answerId?: string | null,
   questionId?: string | null,
+  parentKey?: string,
 ): PaidColumnRef | null {
   if (!node || typeof node !== "object" || depth > 8 || seen.has(node)) return null;
   seen.add(node);
   if (Array.isArray(node)) {
     let best: PaidColumnRef | null = null;
-    for (const item of node) best = betterRef(best, walkMeta(item, depth + 1, seen, answerId, questionId));
+    for (const item of node) best = betterRef(best, walkMeta(item, depth + 1, seen, answerId, questionId, parentKey));
     return best;
   }
   const rec = node as Record<string, unknown>;
-  let best = refFromMetaObject(rec, answerId, questionId);
+  let best = refFromMetaObject(rec, answerId, questionId, parentKey);
   for (const [key, value] of Object.entries(rec)) {
-    if (SKIP_META_KEYS.has(key)) continue;
-    if (typeof value === "string") best = betterRef(best, paidColumnRefFromString(value));
-    else best = betterRef(best, walkMeta(value, depth + 1, seen, answerId, questionId));
+    if (depth === 0 && SKIP_ROOT_KEYS.has(key)) continue;
+    if (typeof value === "string") best = betterRef(best, refsFromText(value));
+    else best = betterRef(best, walkMeta(value, depth + 1, seen, answerId, questionId, key));
   }
   return best;
 }
