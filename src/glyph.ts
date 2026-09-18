@@ -29,6 +29,32 @@ export function ncc(a: ArrayLike<number>, b: ArrayLike<number>): number {
   return dot / Math.sqrt(n1 * n2);
 }
 
+/** Same as the in-browser mapper: compare the red channel of RGBA bitmaps. */
+export function nccRgba(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  const n = a.length;
+  let mean1 = 0;
+  let mean2 = 0;
+  const pixels = n / 4;
+  for (let i = 0; i < n; i += 4) {
+    mean1 += a[i];
+    mean2 += b[i];
+  }
+  mean1 /= pixels;
+  mean2 /= pixels;
+  let dot = 0;
+  let n1 = 0;
+  let n2 = 0;
+  for (let i = 0; i < n; i += 4) {
+    const d1 = a[i] - mean1;
+    const d2 = b[i] - mean2;
+    dot += d1 * d2;
+    n1 += d1 * d1;
+    n2 += d2 * d2;
+  }
+  if (n1 === 0 || n2 === 0) return 0;
+  return dot / Math.sqrt(n1 * n2);
+}
+
 /** Maximize assignment via Hungarian on -similarity (same as scipy linear_sum_assignment(-sim)). */
 export function hungarianAssign(sim: number[][]): number[] {
   const cost = sim.map((row) => row.map((x) => -x));

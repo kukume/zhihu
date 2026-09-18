@@ -11,5 +11,8 @@
   "browser": {
     "binding": "BROWSER",
     "remote": true
+  },
+  "limits": {
+    "cpu_ms": 60000
   }
 }

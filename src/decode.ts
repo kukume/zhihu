@@ -1,4 +1,4 @@
-import { browserFetchPaid, browserMapGlyphs, type GlyphMapResult } from "./browser";
+import { browserFetchPaid } from "./browser";
 import { cookiesDiffer } from "./cookies";
 import {
   applyMapping,
@@ -7,6 +7,7 @@ import {
   looksLikePaidHtml,
   pickContentFont,
 } from "./fonts";
+import { mapGlyphsByOutline, type GlyphMapResult } from "./outline";
 import {
   extractArticleHtml,
   extractTitle,
@@ -113,28 +114,28 @@ function resultFromHtmlBody(
   };
 }
 
-async function decodeFromHtml(
-  env: Env,
-  target: ZhihuTarget,
-  html: string,
-  warnings: string[],
-): Promise<DecodeResult> {
-  const title = extractTitle(html);
+async function mapPaidHtml(html: string, warnings: string[], kind: string): Promise<{ mapped: GlyphMapResult; fontCount: number }> {
   const fonts = extractBase64Fonts(html);
-  const picked = pickContentFont(fonts);
   let mapped: GlyphMapResult = { mapping: {}, meanBest: 0, tofu: false };
+  const picked = pickContentFont(fonts);
   if (picked) {
     try {
-      mapped = await browserMapGlyphs(env, picked.font.base64, picked.chars);
+      mapped = await mapGlyphsByOutline(picked.font.base64, picked.chars);
     } catch (err) {
       warnings.push(`Glyph mapping failed: ${err instanceof Error ? err.message : String(err)}`);
     }
-  } else if (target.kind === "paid") {
+  } else if (kind === "paid") {
     warnings.push("No content font found in HTML");
   }
+  return { mapped, fontCount: fonts.length };
+}
+
+async function decodeFromHtml(target: ZhihuTarget, html: string, warnings: string[]): Promise<DecodeResult> {
+  const title = extractTitle(html);
+  const { mapped, fontCount } = await mapPaidHtml(html, warnings, target.kind);
   const body = extractArticleHtml(html, targetId(target));
   return resultFromHtmlBody(target, body, title, mapped, warnings, {
-    font_count: fonts.length,
+    font_count: fontCount,
     cookie_refreshed: false,
   });
 }
@@ -148,7 +149,7 @@ async function decodePaidPage(env: Env, target: ZhihuTarget, cookie: string): Pr
 
   const first = await httpFetchHtml(target.url, cookie);
   if (!looksLikeChallenge(first.html, first.status) && looksLikePaidHtml(first.html)) {
-    return decodeFromHtml(env, target, first.html, warnings);
+    return decodeFromHtml(target, first.html, warnings);
   }
 
   warnings.push(
@@ -156,14 +157,14 @@ async function decodePaidPage(env: Env, target: ZhihuTarget, cookie: string): Pr
   );
   const refreshed = await browserFetchPaid(env, target.url, cookie);
   const title = extractTitle(refreshed.html);
-  const fonts = extractBase64Fonts(refreshed.html);
-  const body = extractArticleHtml(refreshed.html, targetId(target));
   if (!looksLikePaidHtml(refreshed.html)) {
     warnings.push("Browser fetch still did not return paid HTML. Cookie may lack 盐选 access or login expired.");
   }
+  const { mapped, fontCount } = await mapPaidHtml(refreshed.html, warnings, target.kind);
+  const body = extractArticleHtml(refreshed.html, targetId(target));
   const updated = Boolean(refreshed.cookie && cookiesDiffer(cookie, refreshed.cookie));
-  return resultFromHtmlBody(target, body, title, refreshed.mapped, warnings, {
-    font_count: fonts.length,
+  return resultFromHtmlBody(target, body, title, mapped, warnings, {
+    font_count: fontCount,
     cookie_refreshed: updated,
     cookie: updated ? refreshed.cookie : undefined,
   });
