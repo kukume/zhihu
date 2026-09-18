@@ -1,8 +1,6 @@
 export const UA =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
 
-export const COOKIE_KEY = "zhihu_cookie";
-
 export type CookiePair = { name: string; value: string };
 
 export function parseCookieHeader(raw: string): CookiePair[] {
@@ -30,16 +28,14 @@ export function hasLogin(pairs: CookiePair[]): boolean {
   return pairs.some((p) => p.name === "z_c0" && p.value.length > 20);
 }
 
-export async function loadCookieHeader(env: Env): Promise<string> {
-  const stored = await env.ZHIHU_KV.get(COOKIE_KEY);
-  if (stored && stored.length > 20) return stored;
-  return "";
+export function cookieFromRequest(request: Request): string {
+  const fromCookie = request.headers.get("Cookie")?.trim() ?? "";
+  if (fromCookie) return fromCookie;
+  return request.headers.get("X-Zhihu-Cookie")?.trim() ?? "";
 }
 
-export async function saveCookieHeader(env: Env, header: string): Promise<void> {
-  const cleaned = header.trim();
-  if (!cleaned) return;
-  await env.ZHIHU_KV.put(COOKIE_KEY, cleaned);
+export function cookiesDiffer(before: string, after: string): boolean {
+  return toCookieHeader(parseCookieHeader(after)) !== toCookieHeader(parseCookieHeader(before));
 }
 
 export function zhihuHeaders(cookie: string, accept = "application/json"): HeadersInit {

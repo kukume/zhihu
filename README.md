@@ -6,16 +6,17 @@
 2. 进入 [Cloudflare Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages/create)
 3. 选择 Continue with GitHub 并选择你的仓库
 4. 构建命令留空，部署命令填 `npm run deploy`
-5. 等部署完成后，打开 [KV 命名空间](https://dash.cloudflare.com/?to=/:account/workers/kv/namespaces)，进入本 Worker 绑定的 KV，添加一条记录：密钥为 `zhihu_cookie`，值为从知乎抓到的 Cookie（一行 Cookie 头，如 `z_c0=...; __zse_ck=...`）
-6. 打开生成的 Workers 域名
+5. 打开生成的 Workers 域名
 
 - Workers 默认域名在部分网络环境不可直连。如需自定义域名，到 [Workers 设置](https://dash.cloudflare.com/?to=/:account/workers/services/view/zhihu/production/settings)里添加。
 
 ## 接口
 
+所有接口都需要在请求头里带上知乎 Cookie。
+
 ### GET `/`
 
-无请求体。返回是否已登录。
+无请求体。根据请求头 Cookie 返回是否已登录。
 
 ```json
 { "logged_in": true, "message": "已登录" }
@@ -81,6 +82,8 @@ GET /child_comments/456?limit=20
 `Content-Type: application/json`
 
 只解盐选。专栏页走页面 + 字体解码。盐选回答 URL 只从该回答自己的元数据里取对应专栏，再走同一套解码。不是盐选则返回 400。
+
+无头浏览器更新了 Cookie 时，响应会多出 `cookie` 字段（以及 `cookie_refreshed: true`）。
 
 ```json
 {

@@ -1,4 +1,3 @@
-# Cookie 不走 HTTP，也不要发到聊天里。写入 KV：
-# npx wrangler kv key put zhihu_cookie --binding ZHIHU_KV --remote --path cookie.txt
-# 本地模拟：
-# npx wrangler kv key put zhihu_cookie --binding ZHIHU_KV --local --path cookie.txt
+# Cookie 每次从请求头读取，不再写入 KV。
+# 请求带 Cookie: z_c0=...; __zse_ck=...
+# 无头浏览器刷新后，响应 JSON 会带 cookie 字段（同时有 X-Zhihu-Cookie 头）。

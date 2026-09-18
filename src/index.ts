@@ -1,4 +1,4 @@
-import { hasLogin, loadCookieHeader, parseCookieHeader } from "./cookies";
+import { cookieFromRequest, hasLogin, parseCookieHeader } from "./cookies";
 import { decodeZhihuUrl } from "./decode";
 import {
   fetchChildComments,
@@ -12,11 +12,19 @@ import {
 const CORS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type",
+  "Access-Control-Allow-Headers": "Content-Type, Cookie, X-Zhihu-Cookie",
+  "Access-Control-Expose-Headers": "X-Zhihu-Cookie",
 };
 
 function json(data: unknown, status = 200): Response {
-  return Response.json(data, { status, headers: CORS });
+  const headers: Record<string, string> = { ...CORS };
+  if (data && typeof data === "object" && "cookie" in data) {
+    const cookie = (data as { cookie?: unknown }).cookie;
+    if (typeof cookie === "string" && cookie.trim()) {
+      headers["X-Zhihu-Cookie"] = cookie.trim();
+    }
+  }
+  return Response.json(data, { status, headers });
 }
 
 function errorResponse(err: unknown): Response {
@@ -38,7 +46,7 @@ export default {
 
     try {
       if (path === "/") {
-        const cookie = await loadCookieHeader(env);
+        const cookie = cookieFromRequest(request);
         const logged_in = hasLogin(parseCookieHeader(cookie));
         return json({
           logged_in,
@@ -47,7 +55,7 @@ export default {
       }
 
       if (path === "/recommend") {
-        const cookie = await getCookieOrThrow(env);
+        const cookie = getCookieOrThrow(request);
         const limit = Math.min(20, Math.max(1, Number(url.searchParams.get("limit") ?? 6) || 6));
         const recs = await fetchRecommendations(cookie, limit);
         return json({ count: recs.length, data: recs });
@@ -55,7 +63,7 @@ export default {
 
       const recommendItemMatch = path.match(/^\/recommend\/([^/]+)$/);
       if (recommendItemMatch) {
-        const cookie = await getCookieOrThrow(env);
+        const cookie = getCookieOrThrow(request);
         const id = recommendItemMatch[1];
         const type = (url.searchParams.get("type") ?? "").trim();
         if (!type) return json({ error: "Missing 'type' query parameter" }, 400);
@@ -78,7 +86,7 @@ export default {
 
       const commentsMatch = path.match(/^\/comments\/([^/]+)$/);
       if (commentsMatch) {
-        const cookie = await getCookieOrThrow(env);
+        const cookie = getCookieOrThrow(request);
         const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit") ?? 20) || 20));
         const offset = url.searchParams.get("offset") ?? "";
         const orderBy = url.searchParams.get("order_by") ?? "score";
@@ -99,7 +107,7 @@ export default {
 
       const childMatch = path.match(/^\/child_comments\/([^/]+)$/);
       if (childMatch) {
-        const cookie = await getCookieOrThrow(env);
+        const cookie = getCookieOrThrow(request);
         const limit = Math.min(50, Math.max(1, Number(url.searchParams.get("limit") ?? 20) || 20));
         const offset = url.searchParams.get("offset") ?? "";
         const { comments, paging } = await fetchChildComments(cookie, childMatch[1], limit, offset);
@@ -112,10 +120,11 @@ export default {
       }
 
       if (path === "/decode" && request.method === "POST") {
+        const cookie = getCookieOrThrow(request);
         const body = (await request.json().catch(() => ({}))) as { url?: string };
         const target = (body.url ?? "").trim();
         if (!target) return json({ error: "Missing 'url' in JSON body" }, 400);
-        const result = await decodeZhihuUrl(env, target);
+        const result = await decodeZhihuUrl(env, target, cookie);
         return json(result);
       }
 

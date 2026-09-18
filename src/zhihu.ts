@@ -1,6 +1,6 @@
 import { htmlToMarkdown, htmlToPlain, htmlToSegments } from "./html";
 import { parseZhihuJson } from "./json";
-import { hasLogin, loadCookieHeader, parseCookieHeader, zhihuHeaders } from "./cookies";
+import { cookieFromRequest, hasLogin, parseCookieHeader, zhihuHeaders } from "./cookies";
 
 export function requireLogin(cookie: string): void {
   if (!hasLogin(parseCookieHeader(cookie))) {
@@ -329,8 +329,8 @@ export async function fetchChildComments(
   };
 }
 
-export async function getCookieOrThrow(env: Env): Promise<string> {
-  const cookie = await loadCookieHeader(env);
+export function getCookieOrThrow(request: Request): string {
+  const cookie = cookieFromRequest(request);
   requireLogin(cookie);
   return cookie;
 }

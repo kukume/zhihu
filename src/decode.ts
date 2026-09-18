@@ -1,5 +1,5 @@
 import { browserFetchPaid, browserMapGlyphs, type GlyphMapResult } from "./browser";
-import { loadCookieHeader } from "./cookies";
+import { cookiesDiffer } from "./cookies";
 import {
   applyMapping,
   extractBase64Fonts,
@@ -23,7 +23,7 @@ import {
   targetTypeLabel,
   type ZhihuTarget,
 } from "./urls";
-import { getCookieOrThrow, HttpError } from "./zhihu";
+import { HttpError, requireLogin } from "./zhihu";
 
 export type DecodeResult = {
   url: string;
@@ -44,6 +44,7 @@ export type DecodeResult = {
   mapping_size: number;
   warnings: string[];
   cookie_refreshed: boolean;
+  cookie?: string;
 };
 
 function stripLegalFooter(text: string): string {
@@ -74,7 +75,13 @@ function resultFromHtmlBody(
   title: string,
   mapped: GlyphMapResult,
   warnings: string[],
-  extras: { font_count: number; cookie_refreshed: boolean; author?: string; question_detail?: string },
+  extras: {
+    font_count: number;
+    cookie_refreshed: boolean;
+    cookie?: string;
+    author?: string;
+    question_detail?: string;
+  },
 ): DecodeResult {
   const decodedHtml = applyGlyphsToHtml(htmlBody, mapped, warnings);
   const text = stripLegalFooter(htmlToPlain(decodedHtml));
@@ -102,6 +109,7 @@ function resultFromHtmlBody(
     mapping_size: Object.keys(mapped.mapping).length,
     warnings,
     cookie_refreshed: extras.cookie_refreshed,
+    cookie: extras.cookie,
   };
 }
 
@@ -131,15 +139,12 @@ async function decodeFromHtml(
   });
 }
 
-async function decodePaidPage(env: Env, target: ZhihuTarget): Promise<DecodeResult> {
+async function decodePaidPage(env: Env, target: ZhihuTarget, cookie: string): Promise<DecodeResult> {
   if (target.kind !== "paid") {
     throw new HttpError(400, "不是盐选内容");
   }
   const warnings: string[] = [];
-  const cookie = await loadCookieHeader(env);
-  if (!cookie) {
-    throw new HttpError(401, "未登录");
-  }
+  requireLogin(cookie);
 
   const first = await httpFetchHtml(target.url, cookie);
   if (!looksLikeChallenge(first.html, first.status) && looksLikePaidHtml(first.html)) {
@@ -156,9 +161,11 @@ async function decodePaidPage(env: Env, target: ZhihuTarget): Promise<DecodeResu
   if (!looksLikePaidHtml(refreshed.html)) {
     warnings.push("Browser fetch still did not return paid HTML. Cookie may lack 盐选 access or login expired.");
   }
+  const updated = Boolean(refreshed.cookie && cookiesDiffer(cookie, refreshed.cookie));
   return resultFromHtmlBody(target, body, title, refreshed.mapped, warnings, {
     font_count: fonts.length,
-    cookie_refreshed: true,
+    cookie_refreshed: updated,
+    cookie: updated ? refreshed.cookie : undefined,
   });
 }
 
@@ -166,6 +173,7 @@ async function followPaidColumn(
   env: Env,
   original: ZhihuTarget,
   paidUrl: string,
+  cookie: string,
   warnings: string[],
 ): Promise<DecodeResult> {
   const paidTarget = parseZhihuUrl(paidUrl);
@@ -173,7 +181,7 @@ async function followPaidColumn(
     throw new HttpError(400, "未找到对应盐选专栏");
   }
   warnings.push(`Using linked 盐选专栏 ${paidUrl}`);
-  const paid = await decodePaidPage(env, paidTarget);
+  const paid = await decodePaidPage(env, paidTarget, cookie);
   return {
     ...paid,
     url: original.url,
@@ -183,7 +191,7 @@ async function followPaidColumn(
   };
 }
 
-export async function decodeZhihuUrl(env: Env, url: string): Promise<DecodeResult> {
+export async function decodeZhihuUrl(env: Env, url: string, cookie: string): Promise<DecodeResult> {
   let target: ZhihuTarget;
   try {
     target = parseZhihuUrl(url);
@@ -192,13 +200,12 @@ export async function decodeZhihuUrl(env: Env, url: string): Promise<DecodeResul
   }
 
   if (target.kind === "paid") {
-    return decodePaidPage(env, target);
+    return decodePaidPage(env, target, cookie);
   }
 
   if (target.kind === "answer") {
-    const cookie = await getCookieOrThrow(env);
     const resolved = await resolvePaidColumnForAnswer(cookie, url);
-    return followPaidColumn(env, target, resolved.paidUrl, []);
+    return followPaidColumn(env, target, resolved.paidUrl, cookie, []);
   }
 
   throw new HttpError(400, "不是盐选内容");

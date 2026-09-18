@@ -1,5 +1,5 @@
 import puppeteer, { type Page } from "@cloudflare/puppeteer";
-import { UA, parseCookieHeader, saveCookieHeader, toCookieHeader } from "./cookies";
+import { UA, parseCookieHeader, toCookieHeader } from "./cookies";
 import type { CookiePair } from "./cookies";
 import { extractBase64Fonts, pickContentFont } from "./fonts";
 
@@ -189,7 +189,6 @@ export async function browserFetchPaid(
 
     const html = await page.content();
     const exported = fromPuppeteerCookies(await page.cookies("https://www.zhihu.com"));
-    if (exported) await saveCookieHeader(env, exported);
 
     let mapped: GlyphMapResult = { mapping: {}, meanBest: 0, tofu: false };
     const picked = pickContentFont(extractBase64Fonts(html));
